@@ -1,0 +1,12 @@
+[application]
+name = "opencrabs-desktop-ui"
+default_platform = "web"
+out_dir = "dist"
+asset_dir = "public"
+
+[web.app]
+title = "OpenCrabs"
+
+[web.watcher]
+watch_path = ["src", "public", "Cargo.toml"]
+reload_html = true
