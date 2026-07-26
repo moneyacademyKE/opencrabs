@@ -7,6 +7,13 @@ asset_dir = "public"
 [web.app]
 title = "OpenCrabs"
 
+# wasm-opt chokes on the DWARF debug info emitted by the toolchain (binaryen
+# SIGABRT at DWARFEmitter), which makes the release build non-deterministic
+# (dx falls back to unoptimized, unhashed output). Strip debug symbols so the
+# release build is deterministic and optimized.
+[web.wasm_opt]
+debug = false
+
 [web.watcher]
 watch_path = ["src", "public", "Cargo.toml"]
 reload_html = true

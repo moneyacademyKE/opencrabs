@@ -4,11 +4,14 @@
 # Every gate is fail-closed: the first failure aborts the run with a clear GATE
 # label. Deterministic evidence is written under .verification/.
 #
+# The Dioxus frontend is built with the `dx` CLI (the Dioxus way) — building via
+# Trunk left `dioxus::launch` as a silent no-op, so the frontend never mounted.
+#
 # Gates, in order:
-#   frontend: fmt, clippy -D warnings, check, test, trunk release build,
-#             paired/hashed JS+WASM assets present in dist/index.html
-#   native:   fmt, clippy -D warnings, check, test, tauri bundle
-#   smoke:    native macOS launch + IPC-readiness + liveness + log-clean
+#   frontend: fmt, clippy -D warnings, check, test, dx release build,
+#             hashed JS+WASM assets present in the dx output
+#   native:   fmt, clippy -D warnings, check, test, tauri bundle (uses dx build)
+#   smoke:    native macOS launch + IPC-readiness + liveness + log-clean + mount screenshot
 #
 # Run from anywhere:  sh desktop/scripts/release-verify.sh
 # Needs an interactive macOS session for the final smoke gate (GUI launch).
@@ -18,6 +21,8 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 evidence="$root/.verification"
 mkdir -p "$evidence"
+
+DX_RELEASE_OUT="$root/target/dx/opencrabs-desktop-ui/release/web/public"
 
 gate() {
   printf '\n=== GATE: %s ===\n' "$1"
@@ -30,10 +35,14 @@ need() {
   fi
 }
 
-need trunk
+need dx
 need cargo
 cargo tauri --version >/dev/null 2>&1 || {
   printf '%s\n' 'Missing required release tool: tauri-cli (install with cargo install tauri-cli --version "^2" --locked)' >&2
+  exit 1
+}
+dx --version >/dev/null 2>&1 || {
+  printf '%s\n' 'Missing required release tool: dx (install with cargo install dioxus-cli --version 0.7 --locked)' >&2
   exit 1
 }
 
@@ -50,28 +59,28 @@ cargo check --message-format short
 gate "frontend: cargo test"
 cargo test --message-format short
 
-gate "frontend: trunk build --release"
-trunk build --release
-
-gate "frontend: paired hashed release assets in dist/index.html"
-grep -Eq 'opencrabs-desktop-ui-[0-9a-f]+\.js' dist/index.html \
-  || { printf '%s\n' 'FAIL: hashed JS asset not referenced in dist/index.html' >&2; exit 1; }
-grep -Eq 'opencrabs-desktop-ui-[0-9a-f]+_bg\.wasm' dist/index.html \
-  || { printf '%s\n' 'FAIL: hashed WASM asset not referenced in dist/index.html' >&2; exit 1; }
-js_hash=$(grep -oE 'opencrabs-desktop-ui-[0-9a-f]+\.js' dist/index.html | head -1 | sed -E 's/.*-([0-9a-f]+)\.js/\1/')
-wasm_hash=$(grep -oE 'opencrabs-desktop-ui-[0-9a-f]+_bg\.wasm' dist/index.html | head -1 | sed -E 's/.*-([0-9a-f]+)_bg\.wasm/\1/')
-[ -n "$js_hash" ] || { printf '%s\n' 'FAIL: could not extract JS hash' >&2; exit 1; }
-[ "$js_hash" = "$wasm_hash" ] \
-  || { printf '%s\n' "FAIL: JS/WASM hash pair mismatch ($js_hash != $wasm_hash)" >&2; exit 1; }
-# The hashed asset files themselves must exist on disk (deterministic pairing).
-test -f "dist/opencrabs-desktop-ui-$js_hash.js" \
-  || { printf '%s\n' "FAIL: dist/opencrabs-desktop-ui-$js_hash.js missing" >&2; exit 1; }
-test -f "dist/opencrabs-desktop-ui-${js_hash}_bg.wasm" \
-  || { printf '%s\n' "FAIL: dist/opencrabs-desktop-ui-${js_hash}_bg.wasm missing" >&2; exit 1; }
-# Startup probes must live in the JS bundle, not be inlined into the HTML shell.
-! grep -q 'TrunkApplicationStarted.*mounted' dist/index.html \
-  || { printf '%s\n' 'FAIL: startup marker leaked into dist/index.html' >&2; exit 1; }
-printf '%s\n' "  hashed pair OK: $js_hash"
+gate "frontend: dx build --release + self-consistent assets"
+dx build --release
+INDEX="$DX_RELEASE_OUT/index.html"
+[ -f "$INDEX" ] \
+  || { printf '%s\n' "FAIL: dx output index.html missing at $INDEX" >&2; exit 1; }
+# index.html references the JS bundle via <script ... src="...">. Extract and
+# verify the referenced file exists on disk. This is robust to dx's two release
+# output shapes (hashed under assets/ when wasm-opt runs, unhashed under wasm/
+# when binaryen's DWARF emitter SIGABRTs and dx falls back) — both are
+# self-consistent and mount; we only require internal consistency.
+js_rel=$(grep -oE 'src="[^"]*opencrabs-desktop-ui[^"]*\.js"' "$INDEX" | head -1 \
+  | sed -E 's/src="([^"]+)"/\1/' | sed -E 's#^/(\./)?##')
+[ -n "$js_rel" ] \
+  || { printf '%s\n' 'FAIL: no JS bundle referenced in dx output index.html' >&2; exit 1; }
+[ -f "$DX_RELEASE_OUT/$js_rel" ] \
+  || { printf '%s\n' "FAIL: $DX_RELEASE_OUT/$js_rel missing" >&2; exit 1; }
+# A WASM bundle must exist (hashed under assets/ or unhashed under wasm/).
+if ! { ls "$DX_RELEASE_OUT"/assets/*.wasm >/dev/null 2>&1 \
+    || [ -f "$DX_RELEASE_OUT/wasm/opencrabs-desktop-ui_bg.wasm" ]; }; then
+  printf '%s\n' 'FAIL: no WASM bundle in dx output' >&2; exit 1
+fi
+printf '%s\n' "  dx release assets OK: js=$js_rel"
 
 # ---------------- native gates ----------------
 gate "native: cargo fmt --check"
@@ -86,7 +95,7 @@ gate "native: cargo check"
 gate "native: cargo test"
 ( cd src-tauri && cargo test --message-format short )
 
-gate "native: tauri bundle (release)"
+gate "native: tauri bundle (release; runs dx build via beforeBuildCommand)"
 ( cd src-tauri && cargo tauri build )
 
 # ---------------- smoke gate ----------------

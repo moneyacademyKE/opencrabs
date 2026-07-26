@@ -112,13 +112,35 @@ fn chat_uses_completed_request_response_without_wasm_event_closures() {
 }
 
 #[test]
-fn startup_shell_exposes_mount_and_exception_probe() {
+fn index_is_dioxus_native_with_mount_root_and_panic_hook() {
+    // The frontend is built via the `dx` CLI (the Dioxus way). index.html is a
+    // clean shell with the Dioxus mount root; dx injects its own wasm loader. It
+    // must NOT carry Trunk markup — building via Trunk left `dioxus::launch` as a
+    // silent no-op, so the frontend never mounted. A Rust panic during launch is
+    // surfaced via the main.rs panic hook (console.error).
     let index = std::fs::read_to_string(repo_root().join("index.html")).expect("read index.html");
+    let main_rs = std::fs::read_to_string(repo_root().join("src/main.rs")).expect("read main.rs");
 
-    assert!(index.contains("window.__opencrabs_startup_error = null"));
-    assert!(index.contains("unhandledrejection"));
-    assert!(index.contains("root.dataset.opencrabsMounted = \"true\""));
-    assert!(index.contains("OpenCrabs could not start"));
+    // Dioxus mounts into the #main root.
+    assert!(
+        index.contains(r#"<div id="main">"#),
+        "index.html missing Dioxus mount root #main"
+    );
+    // No Trunk markup — we build via dx, not Trunk.
+    assert!(
+        !index.contains("data-trunk"),
+        "index.html still carries Trunk markup (build via dx instead)"
+    );
+    assert!(
+        !index.contains("TrunkApplicationStarted"),
+        "index.html references the Trunk event (obsolete under dx)"
+    );
+    // main.rs launches Dioxus and surfaces panics.
+    assert!(
+        main_rs.contains("dioxus::launch"),
+        "main.rs does not launch Dioxus"
+    );
+    assert!(main_rs.contains("set_hook"), "main.rs missing panic hook");
 }
 
 #[test]

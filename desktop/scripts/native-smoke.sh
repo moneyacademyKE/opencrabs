@@ -20,7 +20,6 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-app="$root/src-tauri/target/release/bundle/macos/OpenCrabs.app/Contents/MacOS/OpenCrabs"
 evidence="$root/.verification/native-smoke"
 mkdir -p "$evidence"
 log="$evidence/app.log"
@@ -29,8 +28,22 @@ manifest="$evidence/manifest.json"
 
 printf '%s\n' '--- native macOS smoke ---'
 
-if [ ! -x "$app" ]; then
-  printf '%s\n' "FAIL: packaged binary not found at $app" >&2
+# Discover the packaged bundle + its Mach-O dynamically. Tauri names the
+# executable after the Cargo binary (e.g. opencrabs-desktop), which need not
+# match the productName used for the .app directory — so never hardcode it.
+bundle=""
+for d in "$root/src-tauri/target/release/bundle/macos"/*.app; do
+  [ -d "$d" ] && bundle="$d" && break
+done
+app=""
+if [ -n "$bundle" ]; then
+  for f in "$bundle/Contents/MacOS/"*; do
+    [ -x "$f" ] && app="$f" && break
+  done
+fi
+
+if [ -z "$app" ] || [ ! -x "$app" ]; then
+  printf '%s\n' "FAIL: packaged executable not found under $bundle" >&2
   printf '%s\n' "      run 'cargo tauri build' (or release-verify.sh) first." >&2
   exit 1
 fi
@@ -68,8 +81,10 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   sleep 0.5
 done
 
-# Give the window a moment to render, then capture a screenshot (best-effort).
-sleep 4
+# Give the window time to fully mount the WASM frontend (Dioxus load + initial
+# IPC fetches). Must exceed the index.html startup-watchdog (10s) so a pending
+# init is surfaced into the page before the screenshot is taken.
+sleep 14
 shot_ok=0
 if command -v screencapture >/dev/null 2>&1; then
   if screencapture -x "$shot" 2>/dev/null && [ -s "$shot" ]; then
