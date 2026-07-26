@@ -90,3 +90,45 @@ fn bridge_preserves_the_tauri_core_receiver_and_named_args() {
     assert!(!bridge_rs.contains("tauri_invoke_without_args"));
     assert!(!bridge_rs.contains("tauri_invoke_with_args"));
 }
+
+#[test]
+fn chat_uses_completed_request_response_without_wasm_event_closures() {
+    let app_rs = std::fs::read_to_string(repo_root().join("src/app.rs")).expect("read app.rs");
+    let bridge_rs =
+        std::fs::read_to_string(repo_root().join("src/bridge.rs")).expect("read bridge.rs");
+    let backend_lib =
+        std::fs::read_to_string(backend_root().join("src/lib.rs")).expect("read backend lib");
+    let backend_chat = std::fs::read_to_string(backend_root().join("src/commands/chat.rs"))
+        .expect("read backend chat");
+
+    assert!(app_rs.contains("\"send_message\""));
+    assert!(app_rs.contains("Message sent, but the transcript could not refresh"));
+    assert!(!app_rs.contains("send_message_streaming"));
+    assert!(!app_rs.contains("stop_generation"));
+    assert!(!bridge_rs.contains("Closure<"));
+    assert!(!backend_lib.contains("chat::send_message_streaming"));
+    assert!(!backend_chat.contains("send_message_streaming"));
+    assert!(!backend_chat.contains("tauri::Emitter"));
+}
+
+#[test]
+fn startup_shell_exposes_mount_and_exception_probe() {
+    let index = std::fs::read_to_string(repo_root().join("index.html")).expect("read index.html");
+
+    assert!(index.contains("window.__opencrabs_startup_error = null"));
+    assert!(index.contains("unhandledrejection"));
+    assert!(index.contains("root.dataset.opencrabsMounted = \"true\""));
+    assert!(index.contains("OpenCrabs could not start"));
+}
+
+#[test]
+fn frontend_and_native_register_first_invoke_commands() {
+    let app_rs = std::fs::read_to_string(repo_root().join("src/app.rs")).expect("read app.rs");
+    let backend_lib =
+        std::fs::read_to_string(backend_root().join("src/lib.rs")).expect("read backend lib");
+
+    for command in ["get_desktop_state", "list_sessions"] {
+        assert!(app_rs.contains(&format!("\"{command}\"")));
+        assert!(backend_lib.contains(command));
+    }
+}

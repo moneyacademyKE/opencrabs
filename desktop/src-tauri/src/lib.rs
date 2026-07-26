@@ -54,8 +54,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             chat::send_message,
-            chat::send_message_streaming,
-            chat::stop_generation,
             session::list_sessions,
             session::create_session,
             session::rename_session,
