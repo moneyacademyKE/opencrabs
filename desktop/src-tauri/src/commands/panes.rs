@@ -184,12 +184,10 @@ fn validate_desktop_state(state: &DesktopState) -> Result<(), String> {
     if !valid_route(&state.route) {
         return Err("Unknown desktop route".to_string());
     }
-    if let Some(session_id) = &state.selected_session_id {
-        if session_id.trim().is_empty() || session_id.len() > 256 {
-            return Err(
-                "Desktop session identifier must be between 1 and 256 characters".to_string(),
-            );
-        }
+    if let Some(session_id) = &state.selected_session_id
+        && (session_id.trim().is_empty() || session_id.len() > 256)
+    {
+        return Err("Desktop session identifier must be between 1 and 256 characters".to_string());
     }
     Ok(())
 }
