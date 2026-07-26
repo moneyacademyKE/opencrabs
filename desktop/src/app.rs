@@ -108,11 +108,8 @@ impl ActionStatus {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct StreamState {
+struct ChatRequestState {
     active: bool,
-    session_id: Option<String>,
-    pending_text: String,
-    pending_message_id: Option<String>,
 }
 
 fn push_warning_signal(signal: &mut Signal<Vec<String>>, message: String) {
@@ -212,11 +209,10 @@ pub fn App() -> Element {
     let error = use_signal(|| None::<String>);
     let background_warnings = use_signal(Vec::<String>::new);
     let mut action_errors = use_signal(Vec::<ActionStatus>::new);
-    let mut stream_state = use_signal(StreamState::default);
-    // Streaming events are registered after the initial render. Keeping this
-    // startup path free of long-lived JS closures prevents a failed listener
-    // registration from taking down the entire desktop shell.
-    let _ = (stream_state, session_messages, action_errors);
+    let mut chat_request = use_signal(ChatRequestState::default);
+    // Chat intentionally uses the completed request/response command. The prior
+    // event stream required long-lived JavaScript closures whose ownership and
+    // unlisten lifecycle were not safe in the WASM shell.
 
     use_future(move || {
         let mut route = route;
@@ -240,12 +236,12 @@ pub fn App() -> Element {
         let mut cron_jobs = cron_jobs;
         let mut channels = channels;
         let mut usage = usage;
-        let mut stream_state = stream_state;
+        let mut chat_request = chat_request;
 
         async move {
             status.set("Loading sessions…".to_string());
             error.set(None);
-            stream_state.set(StreamState::default());
+            chat_request.set(ChatRequestState::default());
 
             let persisted = invoke::<DesktopState, _>("get_desktop_state", json!({}))
                 .await
@@ -401,27 +397,7 @@ pub fn App() -> Element {
         .map(|s| s.title.clone())
         .unwrap_or_else(|| "No session selected".to_string());
 
-    let rendered_messages = {
-        let mut items = session_messages.read().clone();
-        let active_stream = stream_state.read().clone();
-        if active_stream.active && !active_stream.pending_text.is_empty() {
-            let next_sequence = items.last().map(|m| m.sequence + 1).unwrap_or(1);
-            items.push(MessageInfo {
-                id: active_stream
-                    .pending_message_id
-                    .clone()
-                    .unwrap_or_else(|| format!("streaming-assistant-{next_sequence}")),
-                role: "assistant".to_string(),
-                content: active_stream.pending_text.clone(),
-                sequence: next_sequence,
-                token_count: None,
-                cost: None,
-                created_at: "streaming".to_string(),
-                thinking: None,
-            });
-        }
-        items
-    };
+    let rendered_messages = session_messages.read().clone();
 
     let filtered_sessions: Vec<SessionInfo> = sessions
         .read()
@@ -493,7 +469,7 @@ pub fn App() -> Element {
                                     Ok(session) => {
                                         sessions.with_mut(|list| list.insert(0, session.clone()));
                                         selected_session.set(Some(session.id.clone()));
-                                        stream_state.set(StreamState::default());
+                                        chat_request.set(ChatRequestState::default());
                                         let state = DesktopState {
                                             route: route.read().as_str().to_string(),
                                             selected_session_id: Some(session.id.clone()),
@@ -576,7 +552,7 @@ pub fn App() -> Element {
                                             move |_| {
                                                 let id_for_messages = id_for_messages.clone();
                                                 selected_session.set(Some(selected_id.clone()));
-                                                stream_state.set(StreamState::default());
+                                                chat_request.set(ChatRequestState::default());
                                                 let state = DesktopState {
                                                     route: route.read().as_str().to_string(),
                                                     selected_session_id: Some(id_for_state.clone()),
@@ -670,7 +646,7 @@ pub fn App() -> Element {
                             title: current_session_title,
                             messages: rendered_messages,
                             composer: composer.read().clone(),
-                            is_streaming: stream_state.read().active,
+                            is_busy: chat_request.read().active,
                             on_input: move |value| composer.set(value),
                             on_send: move |_| {
                                 let maybe_session = selected_session.read().clone();
@@ -693,48 +669,38 @@ pub fn App() -> Element {
                                             thinking: None,
                                         });
                                     });
-                                    stream_state.set(StreamState {
-                                        active: true,
-                                        session_id: Some(session_id.clone()),
-                                        pending_text: String::new(),
-                                        pending_message_id: None,
-                                    });
+                                    chat_request.set(ChatRequestState { active: true });
                                     clear_action_error(&mut action_errors, "chat-send");
                                     spawn(async move {
-                                        match invoke::<String, _>(
-                                            "send_message_streaming",
+                                        let send_result = invoke::<serde_json::Value, _>(
+                                            "send_message",
                                             json!({"sessionId": session_id.clone(), "message": text, "model": null}),
                                         )
-                                        .await
-                                        {
-                                            Ok(message_id) => stream_state.with_mut(|stream| {
-                                                stream.active = true;
-                                                stream.session_id = Some(session_id.clone());
-                                                stream.pending_message_id = Some(message_id);
-                                            }),
-                                            Err(message) => {
-                                                stream_state.set(StreamState::default());
-                                                set_action_error(
+                                        .await;
+                                        match send_result {
+                                            Ok(_) => match invoke::<Vec<MessageInfo>, _>(
+                                                "get_session_messages",
+                                                json!({"sessionId": session_id.clone()}),
+                                            )
+                                            .await
+                                            {
+                                                Ok(messages) => {
+                                                    session_messages.set(messages);
+                                                    clear_action_error(&mut action_errors, "chat-send");
+                                                }
+                                                Err(message) => set_action_error(
                                                     &mut action_errors,
                                                     "chat-send",
-                                                    format!("Failed to send chat message: {message}"),
-                                                );
-                                            }
-                                        }
-                                    });
-                                }
-                            },
-                            on_stop: move |_| {
-                                if let Some(session_id) = selected_session.read().clone() {
-                                    spawn(async move {
-                                        match invoke_unit("stop_generation", json!({"sessionId": session_id.clone()})).await {
-                                            Ok(()) => clear_action_error(&mut action_errors, "chat-stop"),
+                                                    format!("Message sent, but the transcript could not refresh: {message}"),
+                                                ),
+                                            },
                                             Err(message) => set_action_error(
                                                 &mut action_errors,
-                                                "chat-stop",
-                                                format!("Failed to stop generation for {session_id}: {message}"),
+                                                "chat-send",
+                                                format!("Failed to send chat message: {message}"),
                                             ),
                                         }
+                                        chat_request.set(ChatRequestState::default());
                                     });
                                 }
                             }
@@ -1099,7 +1065,31 @@ pub fn App() -> Element {
                         }
                     },
                     RouteId::Usage => rsx! {
-                        UsagePanel { data: usage.read().clone() }
+                        UsagePanel {
+                            data: usage.read().clone(),
+                            on_refresh: move |_| {
+                                let mut usage = usage;
+                                let mut action_errors = action_errors;
+                                spawn(async move {
+                                    match invoke::<DashboardDataInfo, _>(
+                                        "get_usage_data",
+                                        json!({"period": "week"}),
+                                    )
+                                    .await
+                                    {
+                                        Ok(value) => {
+                                            usage.set(Some(value));
+                                            clear_action_error(&mut action_errors, "usage-refresh");
+                                        }
+                                        Err(message) => set_action_error(
+                                            &mut action_errors,
+                                            "usage-refresh",
+                                            format!("Failed to refresh usage: {message}"),
+                                        ),
+                                    }
+                                });
+                            }
+                        }
                         DiagnosticsPanel {}
                     },
                 }
@@ -1270,21 +1260,25 @@ fn ChatPanel(
     title: String,
     messages: Vec<MessageInfo>,
     composer: String,
-    is_streaming: bool,
+    is_busy: bool,
     on_input: EventHandler<String>,
     on_send: EventHandler<()>,
-    on_stop: EventHandler<()>,
 ) -> Element {
     rsx! {
         div { class: "chat-panel",
             div { class: "chat-header",
                 div { class: "chat-title", "{title}" }
                 div { class: "card-actions",
-                    button { class: "btn-small", disabled: !is_streaming, onclick: move |_| on_stop.call(()), "Stop" }
-                    span { class: "badge", if is_streaming { "streaming" } else { "idle" } }
+                    span { class: "badge", if is_busy { "waiting" } else { "idle" } }
                 }
             }
             div { class: "message-list",
+                if messages.is_empty() {
+                    div { class: "empty-state",
+                        h3 { "No messages in this session yet" }
+                        p { "Send a message below to start the conversation. Chat uses a single completed request/response cycle per turn." }
+                    }
+                }
                 for message in messages.iter() {
                     div {
                         class: if message.role == "user" { "message-bubble user" } else { "message-bubble assistant" },
@@ -1305,7 +1299,7 @@ fn ChatPanel(
                     placeholder: "Talk to OpenCrabs…",
                     oninput: move |evt| on_input.call(evt.value()),
                 }
-                button { class: "btn-send", disabled: is_streaming, onclick: move |_| on_send.call(()), "➤" }
+                button { class: "btn-send", disabled: is_busy, onclick: move |_| on_send.call(()), "➤" }
             }
         }
     }
@@ -1464,6 +1458,7 @@ fn ToolsPanel(
     on_open: EventHandler<String>,
     on_approve: EventHandler<String>,
 ) -> Element {
+    let mut pending_approve = use_signal(|| false);
     rsx! {
         div {
             div { class: "panel-header",
@@ -1471,7 +1466,7 @@ fn ToolsPanel(
                 span { class: "badge", "{tools.len()} loaded" }
             }
             div { class: "card", style: "margin-bottom: 16px;",
-                p { class: "subtle", "Desktop tool approval persists policy, but does not yet mirror the TUI's richer inline approval event flow." }
+                p { class: "subtle", "Tool approval sets the global agent approval policy (manual, on-request, or auto-always). The desktop preview does not yet store per-tool or per-session approval, and does not mirror the TUI's inline approval event flow." }
             }
             div { class: "card-grid",
                 for tool in tools.iter() {
@@ -1499,11 +1494,29 @@ fn ToolsPanel(
                     p { "{detail.description}" }
                     button {
                         class: "btn-primary",
-                        onclick: {
-                            let tool_name = detail.name.clone();
-                            move |_| on_approve.call(tool_name.clone())
-                        },
-                        "Allow this tool for the current session"
+                        onclick: move |_| pending_approve.set(true),
+                        "Approve — sets global policy…"
+                    }
+                    if *pending_approve.read() {
+                        p { class: "subtle", "This changes the global agent approval policy for every session, not just this tool. Confirm to continue." }
+                        div { class: "card-actions",
+                            button {
+                                class: "btn-primary",
+                                onclick: {
+                                    let tool_name = detail.name.clone();
+                                    move |_| {
+                                        pending_approve.set(false);
+                                        on_approve.call(tool_name.clone());
+                                    }
+                                },
+                                "Confirm — apply global policy"
+                            }
+                            button {
+                                class: "btn-secondary",
+                                onclick: move |_| pending_approve.set(false),
+                                "Cancel"
+                            }
+                        }
                     }
                     pre { class: "code-block", "{detail.parameters}" }
                 }
@@ -1738,42 +1751,54 @@ fn DiagnosticsPanel() -> Element {
 }
 
 #[component]
-fn UsagePanel(data: Option<DashboardDataInfo>) -> Element {
+fn UsagePanel(data: Option<DashboardDataInfo>, on_refresh: EventHandler<()>) -> Element {
     rsx! {
         div {
             div { class: "panel-header",
                 h2 { "Usage" }
                 span { class: "badge", "week" }
+                button { class: "btn-secondary", onclick: move |_| on_refresh.call(()), "Refresh" }
             }
             if let Some(data) = data {
-                div { class: "summary-grid",
-                    SummaryCard { title: "Tokens", value: data.summary.total_tokens.to_string() }
-                    SummaryCard { title: "Cost", value: format!("${:.2}", data.summary.total_cost) }
-                    SummaryCard { title: "Sessions", value: data.summary.session_count.to_string() }
-                    SummaryCard { title: "Calls", value: data.summary.call_count.to_string() }
-                }
-                div { class: "table-container",
-                    table { class: "data-table",
-                        thead {
-                            tr {
-                                th { "Project" }
-                                th { "Tokens" }
-                                th { "Cost" }
-                            }
-                        }
-                        tbody {
-                            for project in data.projects.iter() {
+                if data.projects.is_empty() && data.summary.total_tokens == 0 {
+                    div { class: "empty-state",
+                        h3 { "No usage recorded yet" }
+                        p { "Token, cost, and session totals will appear here once the agent has been used." }
+                    }
+                } else {
+                    div { class: "summary-grid",
+                        SummaryCard { title: "Tokens", value: data.summary.total_tokens.to_string() }
+                        SummaryCard { title: "Cost", value: format!("${:.2}", data.summary.total_cost) }
+                        SummaryCard { title: "Sessions", value: data.summary.session_count.to_string() }
+                        SummaryCard { title: "Calls", value: data.summary.call_count.to_string() }
+                    }
+                    div { class: "table-container",
+                        table { class: "data-table",
+                            thead {
                                 tr {
-                                    td { "{project.project}" }
-                                    td { class: "num", "{project.tokens}" }
-                                    td { class: "num", "${project.cost}" }
+                                    th { "Project" }
+                                    th { "Tokens" }
+                                    th { "Cost" }
+                                }
+                            }
+                            tbody {
+                                for project in data.projects.iter() {
+                                    tr {
+                                        td { "{project.project}" }
+                                        td { class: "num", "{project.tokens}" }
+                                        td { class: "num", "${project.cost}" }
+                                    }
                                 }
                             }
                         }
                     }
                 }
             } else {
-                p { "Usage data unavailable." }
+                div { class: "empty-state",
+                    h3 { "Usage summary is loading or unavailable" }
+                    p { "If a load error was reported above, use Refresh to try again." }
+                    button { class: "btn-primary", onclick: move |_| on_refresh.call(()), "Retry load" }
+                }
             }
         }
     }
