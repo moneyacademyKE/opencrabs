@@ -45,7 +45,7 @@ shows the mounted UI with 43 sessions loaded via IPC).
 
 ## Artifact
 - `OpenCrabs_0.1.0_aarch64.dmg` (10 MB)
-- sha256: `4d23c895c052dc9e3c593eff81772e616a55be9a23742e0815bdbd97684082f9`
+- sha256: `fccc0eec18e1d8febcc295add8958bdb9bdb9ff8a8238468f025c39e9f5377ba`
 
 ## ⚠️ Not signed / not notarized — beta, not for public release
 This DMG is **ad-hoc / unsigned**. macOS Gatekeeper will block it. Until it is
@@ -77,11 +77,8 @@ shasum -a 256 OpenCrabs_0.1.0_aarch64.dmg > OpenCrabs_0.1.0_aarch64.dmg.sha256
 Publication (GitHub Release, etc.) **awaits explicit owner approval**.
 
 ## Known issues
-- `wasm-opt` SIGABRTs on the toolchain's DWARF debug info (binaryen
-  `DWARFEmitter` bug). Non-fatal: dx falls back to a self-consistent bundle and
-  the app still mounts. Release WASM is therefore not size-optimized. Fixing
-  this (strip debug info from the cargo wasm build, or pin a binaryen version)
-  is a follow-up.
 - Building requires the `dx` CLI (`cargo install dioxus-cli --version 0.7`).
-- wasm-opt's intermittent output shape (hashed `assets/` vs unhashed `wasm/`)
-  is handled by the structure-agnostic asset gate.
+- The release WASM is size-optimized (`wasm-opt` runs at level `z` with LTO;
+  the binaryen DWARF SIGABRT that previously forced an unoptimized fallback is
+  resolved by stripping debug info from the cargo wasm build via
+  `[profile.release] debug=false + strip=debuginfo`).

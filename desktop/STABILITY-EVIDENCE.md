@@ -53,7 +53,7 @@ in-tree build). The distribution path works, not just the build output.
 
 - Path: `desktop/src-tauri/target/release/bundle/dmg/OpenCrabs_0.1.0_aarch64.dmg`
 - Size: 10 MB
-- sha256: `4d23c895c052dc9e3c593eff81772e616a55be9a23742e0815bdbd97684082f9`
+- sha256: `fccc0eec18e1d8febcc295add8958bdb9bdb9ff8a8238468f025c39e9f5377ba`
 - Sidecar: `OpenCrabs_0.1.0_aarch64.dmg.sha256`
 - Built from commit `5f2c2dcb` (dx frontend) + `7f92a2dc` (release notes)
 - Branch: `stable-desktop-gui` (not pushed)
@@ -63,20 +63,18 @@ in-tree build). The distribution path works, not just the build output.
 1. **Unsigned / unnotarized.** macOS Gatekeeper will block the DMG. Code-signing
    + notarization require the owner's Apple Developer credentials — runbook is
    in `release-notes-v0.1.0-desktop.md`; not executed.
-2. **`wasm-opt` SIGABRT (non-fatal).** binaryen's DWARF emitter aborts on the
-   toolchain's debug info; dx falls back to a self-consistent (unoptimized)
-   bundle. The app still mounts; the release WASM is not size-optimized.
-3. **Build requires the `dx` CLI.** Building via Trunk reintroduces the
+2. **Build requires the `dx` CLI.** Building via Trunk reintroduces the
    `dioxus::launch` silent-no-op mount defect — the ladder's dx gate guards
-   against this.
-4. **No automated cross-session upgrade test.** No prior versioned release
+   against this. The release WASM is now size-optimized
+   (995KB via `[profile.release]` debug=false + strip=debuginfo + lto, and
+   `[web.wasm_opt]` level=z + keep_names); `wasm-opt` runs clean (the binaryen
+   DWARF SIGABRT is gone).
+3. **No automated cross-session upgrade test.** No prior versioned release
    exists to upgrade from; the fresh-install test covers the install path.
 
 ## Follow-ups (non-blocking)
 
 - Sign + notarize + staple the DMG (owner credentials) → public release.
-- Fix the wasm-opt/DWARF SIGABRT (strip debug info from the cargo wasm build, or
-  pin a binaryen version) to get optimized, deterministic release assets.
 - Push `stable-desktop-gui` and open a PR (awaits owner approval).
 - Re-enable a deterministic loading/empty-state in `index.html` (the clean
   Dioxus-native shell dropped the boot splash; Dioxus mounts fast enough that
@@ -86,7 +84,7 @@ in-tree build). The distribution path works, not just the build output.
 
 The desktop GUI's headline defect (the Dioxus frontend never mounted) is
 **resolved and reproducibly verified**: building via `dx` makes `dioxus::launch`
-mount, the release-verify ladder is green, and native evidence (launch smoke +
-mount screenshot + DMG fresh-install) agrees. Declared **beta-stable**, gated
-from public release only by signing/notarization (credential-bound) and the
-cosmetic wasm-opt optimization follow-up.
+mount, the release-verify ladder is green, the release WASM is now size-optimized
+(`wasm-opt` runs clean), and native evidence (launch smoke + mount screenshot + DMG
+fresh-install) agrees. Declared **beta-stable**, gated from public release only by
+signing/notarization (credential-bound).
