@@ -34,9 +34,10 @@ Frontend, from `desktop/`:
 
 ```text
 cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 cargo check --message-format short
 cargo test --message-format short
-trunk build --release
+dx build --release
 ```
 
 Native shell, from `desktop/src-tauri/`:
@@ -63,7 +64,7 @@ cd /Users/moe/Desktop/crabz/desktop/src-tauri
 cargo tauri dev
 ```
 
-Verify that the Tauri window renders the Dioxus shell, session selection loads messages, and a desktop action either succeeds or surfaces an actionable error. A browser-only Trunk preview is not valid IPC verification because `window.__TAURI__` is absent by design.
+Verify that the Tauri window renders the Dioxus shell, session selection loads messages, and a desktop action either succeeds or surfaces an actionable error. A browser-only `dx serve` preview is not valid IPC verification because `window.__TAURI__` is absent by design.
 
 ## Verified local evidence
 

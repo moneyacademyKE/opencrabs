@@ -1,15 +1,16 @@
 # Desktop release strategy
 
-This directory documents the current production release stance for the OpenCrabs desktop app.
+This directory documents the current production release stance for the OpenCrabs desktop app. The build/verify decisions are recorded in [`adr/0001-build-dioxus-frontend-with-dx-cli.md`](adr/0001-build-dioxus-frontend-with-dx-cli.md) and [`adr/0002-native-frontend-mount-verification.md`](adr/0002-native-frontend-mount-verification.md).
 
 ## Current release posture
 
-The desktop app supports **signed manual bundle distribution first**. It does **not** self-install updates.
+The desktop app supports **signed manual bundle distribution first**. It does **not** self-install updates. The build is **beta-stable but unsigned** (ARM64 macOS): the GUI mounts and IPC is verified, but Gatekeeper will prompt until the artifact is signed/notarized.
 
 What exists now:
 
-- Dioxus WASM frontend embedded in Tauri 2
-- reproducible `cargo tauri build` bundle path, wrapped by `./scripts/release-verify.sh`
+- Dioxus WASM frontend embedded in Tauri 2, built via the **`dx` CLI**
+- reproducible `cargo tauri build` bundle path, wrapped by `./scripts/release-verify.sh` (fmt/clippy/test for both crates, `dx build --release`, tauri bundle)
+- a **native macOS smoke** (`scripts/native-smoke.sh`) that launches the packaged `.app` and verifies launch + `backend_ready` + survival + a clean log + a screenshot
 - update discovery command (`check_for_updates`)
 - explicit non-support for in-app install (`install_update` returns an honest error)
 - macOS `.app` and `.dmg` bundle generation verified locally on 2026-07-26
@@ -19,6 +20,7 @@ What does **not** exist yet:
 - platform-native in-app installer/update application flow
 - restart-and-swap lifecycle per platform
 - signed updater feed validation path
+- code signing, notarization, and stapling (the runbook documents the steps; they need Apple Developer credentials)
 - rollback automation
 
 ## Release lanes

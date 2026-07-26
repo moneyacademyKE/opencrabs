@@ -80,6 +80,27 @@ in-tree build). The distribution path works, not just the build output.
   Dioxus-native shell dropped the boot splash; Dioxus mounts fast enough that
   this is cosmetic).
 
+## Post-beta correction: stylesheet bundling (2026-07-26)
+
+The beta-stable verdict above holds for *mounting*, but a follow-up check found
+the rendered UI was **unstyled**: `dx build` was emitting **no CSS at all** —
+`src/css/app.css` was only referenced by the old Trunk `<link data-trunk>`, which
+`dx` ignores. Without CSS the app rendered inline-styles-only, so Dioxus's
+adjacent text nodes jammed together (`wiredReady`, `CronUpdated`,
+`No workspacecustom:surplus`) — it looked broken despite mounting.
+
+**Fix:** moved the stylesheet to `public/css/app.css` and linked it statically
+(`<link rel="stylesheet" href="/css/app.css">` in `index.html`); `dx` copies
+`public/` to the output root. Verified natively — focused screenshot shows proper
+spacing (titles separated from timestamps, badges separated from labels). Commit
+`657332fe`. (Recorded as a consequence in [ADR-0001](docs/adr/0001-build-dioxus-frontend-with-dx-cli.md).)
+
+**dx build determinism (confirmed):** four consecutive `dx build --release` runs
+after the DWARF-strip profile produced **0 wasm-opt SIGABRTs** and a consistent
+hashed `assets/` output — no flip to the unoptimized `wasm/` fallback. The
+earlier intermittent flip was stale cache from a pre-strip binary; fresh builds
+are stable.
+
 ## Stability conclusion
 
 The desktop GUI's headline defect (the Dioxus frontend never mounted) is

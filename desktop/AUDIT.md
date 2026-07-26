@@ -1,4 +1,25 @@
-# OpenCrabs Desktop — Audit Report
+> ⚠️ **SUPERSEDED (2026-07-26).** This audit captured the desktop app at **v0.3.74** — a broken build state with `src-ui/` paths that no longer exist, a missing core module, and unaddressed security gaps. It is retained below as a **historical record** of the issues found. The current state is in [`STABILITY-EVIDENCE.md`](STABILITY-EVIDENCE.md); the build/verify decisions are in [`docs/adr/`](docs/adr/). A resolution map follows; most findings below have since been addressed.
+
+## Resolution status (as of the beta-stable build)
+
+| Original finding | Status | Where |
+|---|---|---|
+| Build broken (16+ errors, missing `command_code_cli.rs`) | ✅ Fixed — both crates compile, all gates green | `release-verify.sh` |
+| `src-ui/` type mismatches | ✅ N/A — frontend lives in `src/`; DTOs match the backend | `src/models.rs` |
+| XSS via `dangerous_inner_html` | ✅ Not present — Dioxus renders escaped text nodes; no raw-HTML render of model output | `src/app.rs` |
+| Overly permissive file access (no containment) | ✅ Fixed — workspace containment (`..` rejected, canonicalize + `starts_with`) | `src-tauri/src/commands/files.rs` |
+| Overly permissive config/brain writes | ✅ Fixed — allowlisted config keys; brain filename + size + protected-header validation | `config_cmd.rs`, `brain.rs` |
+| `'unsafe-inline'` script in CSP | ✅ Tightened — CSP allows only `'self'`, `'wasm-unsafe-eval'`, `'unsafe-eval'` (panic hook) | `src-tauri/tauri.conf.json` |
+| Channel status fabricated (`alive: enabled`) | ✅ Truthful — UI labels it configuration/credential readiness, not connectivity | `src/app.rs` |
+| No-op / stub commands | ✅ Removed or honestly marked — streaming/cancel removed; voice & update-install explicitly unsupported and labeled | `src-tauri/src/commands/` |
+| Frontend never mounts | ✅ Fixed — built via the `dx` CLI; mounts natively | [ADR-0001](docs/adr/0001-build-dioxus-frontend-with-dx-cli.md) |
+| No runtime verification | ✅ Added — reproducible ladder + native macOS smoke | [ADR-0002](docs/adr/0002-native-frontend-mount-verification.md) |
+
+**Still open** (tracked, not regressions): macOS code signing / notarization / stapling (needs Apple Developer credentials); transitive dependency advisories inherited from the `opencrabs` core library; accessibility polish across panels.
+
+---
+
+# OpenCrabs Desktop — Audit Report (historical, v0.3.74)
 
 **Date:** 2026-07-25
 **Target:** `/Users/moe/Desktop/crabz/desktop`
