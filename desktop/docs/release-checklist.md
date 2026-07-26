@@ -14,8 +14,8 @@ Use this before promoting OpenCrabs Desktop beyond a preview.
 
 - [ ] Run `./scripts/release-verify.sh` from `desktop/` on the release target.
 - [ ] Record command output, platform, Git commit, and artifact version with release notes.
-- [ ] Confirm `trunk build --release` emitted `dist/app.css`.
-- [ ] Confirm the Trunk bootstrap hash matches `src-tauri/tauri.conf.json`.
+- [ ] Confirm `trunk build --release` emitted a hashed JavaScript module and matching hashed WASM asset in `dist/index.html`.
+- [ ] Confirm the startup fallback remains in place until Dioxus replaces the `.booting` shell; a runtime exception must surface a diagnostic rather than a blank window.
 - [ ] Repeat on every supported target platform before stable distribution.
 
 ## Security

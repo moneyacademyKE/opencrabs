@@ -22,10 +22,9 @@ cargo fmt --check
 cargo check --message-format short
 cargo test --message-format short
 trunk build --release
-test -f dist/app.css || {
-  printf '%s\n' 'Trunk did not emit dist/app.css; refusing to package a blank/unstyled desktop UI.' >&2
-  exit 1
-}
+grep -Eq 'opencrabs-desktop-ui-[0-9a-f]+\.js' dist/index.html
+grep -Eq 'opencrabs-desktop-ui-[0-9a-f]+_bg\.wasm' dist/index.html
+! grep -q 'TrunkApplicationStarted.*mounted' dist/index.html
 
 cd src-tauri
 cargo fmt --check

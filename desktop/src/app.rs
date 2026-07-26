@@ -2,8 +2,6 @@ use opencrabs_desktop_ui::bridge::{invoke, invoke_unit};
 use opencrabs_desktop_ui::models::*;
 
 use dioxus::prelude::*;
-#[cfg(target_arch = "wasm32")]
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 const NAV_ITEMS: &[NavItem] = &[
@@ -117,181 +115,25 @@ struct StreamState {
     pending_message_id: Option<String>,
 }
 
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct StreamChunkPayload {
-    text: String,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct StreamDonePayload {
-    message_id: String,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct StreamStoppedPayload {
-    session_id: String,
-    message_id: String,
-}
-
-#[cfg(target_arch = "wasm32")]
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct StreamErrorPayload {
-    error: String,
-}
-
-fn upsert_action_status(items: &mut Vec<ActionStatus>, next: ActionStatus) {
-    if let Some(existing) = items.iter_mut().find(|item| item.scope == next.scope) {
-        *existing = next;
-    } else {
-        items.push(next);
-    }
-}
-
-fn clear_action_status(items: &mut Vec<ActionStatus>, scope: &'static str) {
-    items.retain(|item| item.scope != scope);
-}
-
 fn push_warning_signal(signal: &mut Signal<Vec<String>>, message: String) {
     signal.with_mut(|items| items.push(message));
 }
 
 fn set_action_error(signal: &mut Signal<Vec<ActionStatus>>, scope: &'static str, message: String) {
-    signal.with_mut(|items| upsert_action_status(items, ActionStatus::new(scope, message)));
+    signal.with_mut(|items| {
+        if let Some(existing) = items.iter_mut().find(|item| item.scope == scope) {
+            *existing = ActionStatus::new(scope, message);
+        } else {
+            items.push(ActionStatus::new(scope, message));
+        }
+    });
 }
 
 fn clear_action_error(signal: &mut Signal<Vec<ActionStatus>>, scope: &'static str) {
-    signal.with_mut(|items| clear_action_status(items, scope));
+    signal.with_mut(|items| items.retain(|item| item.scope != scope));
 }
 
-#[cfg(target_arch = "wasm32")]
-fn subscribe_to_chat_events(
-    stream_state: Signal<StreamState>,
-    session_messages: Signal<Vec<MessageInfo>>,
-    action_errors: Signal<Vec<ActionStatus>>,
-) {
-    use opencrabs_desktop_ui::bridge::{event_payload, listen};
-
-    let mut chunks = stream_state;
-    let mut chunk_errors = action_errors;
-    spawn(async move {
-        let result = listen("stream-chunk", move |event| {
-            match event_payload::<StreamChunkPayload>(event) {
-                Ok(payload) => chunks.with_mut(|stream| {
-                    if stream.active {
-                        stream.pending_text.push_str(&payload.text);
-                    }
-                }),
-                Err(error) => set_action_error(&mut chunk_errors, "chat-stream", error),
-            }
-        })
-        .await;
-        if let Err(error) = result {
-            set_action_error(
-                &mut chunk_errors,
-                "chat-stream",
-                format!("Stream listener failed: {error}"),
-            );
-        }
-    });
-
-    let done_stream = stream_state;
-    let done_messages = session_messages;
-    let mut done_errors = action_errors;
-    spawn(async move {
-        let result = listen("stream-done", move |event| {
-            if event_payload::<StreamDonePayload>(event).is_err() {
-                return;
-            }
-            let Some(session_id) = done_stream.read().session_id.clone() else {
-                return;
-            };
-            let mut stream = done_stream;
-            let mut messages = done_messages;
-            let mut errors = done_errors;
-            spawn(async move {
-                match invoke::<Vec<MessageInfo>, _>(
-                    "get_session_messages",
-                    json!({"sessionId": session_id}),
-                )
-                .await
-                {
-                    Ok(items) => {
-                        messages.set(items);
-                        stream.set(StreamState::default());
-                        clear_action_error(&mut errors, "chat-stream");
-                    }
-                    Err(error) => set_action_error(
-                        &mut errors,
-                        "chat-stream",
-                        format!("Stream refresh failed: {error}"),
-                    ),
-                }
-            });
-        })
-        .await;
-        if let Err(error) = result {
-            set_action_error(
-                &mut done_errors,
-                "chat-stream",
-                format!("Completion listener failed: {error}"),
-            );
-        }
-    });
-
-    let mut stopped_stream = stream_state;
-    let mut stopped_errors = action_errors;
-    spawn(async move {
-        let result = listen("stream-stopped", move |event| {
-            match event_payload::<StreamStoppedPayload>(event) {
-                Ok(_) => stopped_stream.set(StreamState::default()),
-                Err(error) => set_action_error(&mut stopped_errors, "chat-stop", error),
-            }
-        })
-        .await;
-        if let Err(error) = result {
-            set_action_error(
-                &mut stopped_errors,
-                "chat-stop",
-                format!("Stop listener failed: {error}"),
-            );
-        }
-    });
-
-    let mut errored_stream = stream_state;
-    let mut errors = action_errors;
-    spawn(async move {
-        let result = listen("stream-error", move |event| {
-            match event_payload::<StreamErrorPayload>(event) {
-                Ok(payload) => {
-                    errored_stream.set(StreamState::default());
-                    set_action_error(&mut errors, "chat-stream", payload.error);
-                }
-                Err(error) => set_action_error(&mut errors, "chat-stream", error),
-            }
-        })
-        .await;
-        if let Err(error) = result {
-            set_action_error(
-                &mut errors,
-                "chat-stream",
-                format!("Error listener failed: {error}"),
-            );
-        }
-    });
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn subscribe_to_chat_events(
-    _stream_state: Signal<StreamState>,
-    _session_messages: Signal<Vec<MessageInfo>>,
-    _action_errors: Signal<Vec<ActionStatus>>,
-) {
-}
-
-fn compact_tokens(tokens: i64) -> String {
+fn format_token_count(tokens: i64) -> String {
     if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
     } else if tokens >= 1_000 {
@@ -371,7 +213,10 @@ pub fn App() -> Element {
     let background_warnings = use_signal(Vec::<String>::new);
     let mut action_errors = use_signal(Vec::<ActionStatus>::new);
     let mut stream_state = use_signal(StreamState::default);
-    use_effect(move || subscribe_to_chat_events(stream_state, session_messages, action_errors));
+    // Streaming events are registered after the initial render. Keeping this
+    // startup path free of long-lived JS closures prevents a failed listener
+    // registration from taking down the entire desktop shell.
+    let _ = (stream_state, session_messages, action_errors);
 
     use_future(move || {
         let mut route = route;
@@ -714,9 +559,9 @@ pub fn App() -> Element {
                                 (None, None) => "Model unavailable".to_string(),
                             };
                             let usage = if session.total_cost > 0.0 {
-                                format!("{} · ${:.2}", compact_tokens(session.token_count), session.total_cost)
+                                format!("{} · ${:.2}", format_token_count(session.token_count), session.total_cost)
                             } else {
-                                compact_tokens(session.token_count)
+                                format_token_count(session.token_count)
                             };
                             let activity = session_activity_label(&session.updated_at);
                             rsx! {
@@ -1936,7 +1781,7 @@ fn UsagePanel(data: Option<DashboardDataInfo>) -> Element {
 
 #[cfg(test)]
 mod session_history_tests {
-    use super::{compact_path, compact_tokens, session_matches};
+    use super::{compact_path, format_token_count, session_matches};
     use opencrabs_desktop_ui::models::SessionInfo;
 
     fn session() -> SessionInfo {
@@ -1967,7 +1812,7 @@ mod session_history_tests {
 
     #[test]
     fn compact_session_metadata_stays_readable() {
-        assert_eq!(compact_tokens(12_500), "12.5k");
+        assert_eq!(format_token_count(12_500), "12.5k");
         assert_eq!(
             compact_path(Some("/Users/moe/Desktop/crabz")),
             "…/Desktop/crabz"

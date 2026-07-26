@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:8080",
     "beforeDevCommand": "trunk serve --port 8080 --no-autoreload",
-    "beforeBuildCommand": "trunk build"
+    "beforeBuildCommand": "trunk build --release"
   },
   "app": {
     "withGlobalTauri": true,
@@ -26,7 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'sha256-rqShJicMKBDwmEHoc6E8PLt4Iuu6c9ugTxrrHHaJWHo='; style-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https: ws://127.0.0.1:8080 ws://localhost:8080; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob: https:; connect-src 'self' https: ws://127.0.0.1:8080 ws://localhost:8080; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
     }
   },
   "bundle": {

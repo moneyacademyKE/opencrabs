@@ -63,15 +63,15 @@ cargo install tauri-cli --version ^2 --locked
 
 The WASM bridge resolves `window.__TAURI__.core.invoke` at runtime and preserves the `core` receiver when invoking commands. It always forwards the serialized argument object, including named arguments such as `sessionId` for `get_session_messages`.
 
+The default desktop shell deliberately uses request/response IPC only. It does not register long-lived wasm-bindgen callbacks against Tauri's JavaScript event API during startup: those closures are an independent lifecycle boundary and must be introduced with an explicit unlisten/ownership design, not leaked into the page for streaming convenience. Chat submission therefore waits for the native command result and then reloads the persisted transcript.
+
 This matters because detached JavaScript method calls can lose their receiver and silently drop or mishandle IPC arguments. The bridge fails with an explicit native-runtime error when launched in a browser preview rather than pretending desktop controls are functional.
 
 ## CSP and Trunk assets
 
-The Tauri CSP does **not** enable `unsafe-inline`. It pins the current Trunk WASM bootstrap module by SHA-256 and permits only self-hosted script/style assets. The stylesheet is declared as a Trunk-managed `data-trunk` asset, so a build must produce `dist/app.css`.
+The Tauri CSP currently permits the minimal inline startup diagnostic and `wasm-unsafe-eval`, while all Trunk JavaScript, WASM, and CSS assets are hash-named and self-hosted. The stylesheet is declared as a Trunk-managed `data-trunk` asset, so a build must produce a matching hash-named stylesheet.
 
-Development uses `trunk serve --no-autoreload`: Trunk's live-reload client is another inline script and is intentionally excluded rather than opening the CSP.
-
-After changing the frontend or upgrading Trunk, validate the generated bootstrap hash against `src-tauri/tauri.conf.json`. A stale hash intentionally fails closed and can leave the native WebView blank.
+Development uses `trunk serve --no-autoreload`: Trunk's live-reload client is another inline script and is intentionally excluded. After changing the frontend or upgrading Trunk, inspect the generated `dist/index.html` and confirm that its hash-named JavaScript module and WASM asset are paired; a stale asset pair can produce a blank native WebView.
 
 ## Verification
 

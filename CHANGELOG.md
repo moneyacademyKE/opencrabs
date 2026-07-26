@@ -11,11 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Normalize persisted reasoning and tool-call protocol markers into structured, collapsed desktop transcript disclosures.
 - Preserve reasoning-only turns and malformed marker payloads as inspectable fallback details instead of silently deleting them.
-- Add desktop architecture decisions, development playbooks, editor configuration, and Command Code CLI provider module decomposition.
+- Harden the packaged desktop startup path by removing the fragile long-lived Tauri event-listener closure bridge and reloading state through request/response IPC instead.
+- Add a visible startup failure shell so production launch errors surface diagnostics instead of a blank screen.
 
 ### 🔧 Build
 
-- Ignore reproducible desktop build outputs and runtime verification files; publish the ARM64 macOS DMG through GitHub Releases instead.
+- Switch the desktop production bundle to `trunk build --release` with hashed JS/WASM assets.
+- Disable `wasm-opt` in the Trunk pipeline to avoid shipping an over-optimized WASM bundle during desktop packaging.
+- Add release verification that asserts the generated release HTML references hashed frontend assets before Tauri bundles the app.
+- Publish the ARM64 macOS DMG through GitHub Releases instead of checking in reproducible build outputs.
 
 
 ## [0.3.74] - 2026-07-23

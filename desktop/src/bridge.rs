@@ -2,16 +2,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen::{JsCast, JsValue, closure::Closure, prelude::wasm_bindgen};
+use wasm_bindgen::{JsCast, JsValue};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen, catch)]
-    async fn tauri_listen(event: &str, handler: &js_sys::Function) -> Result<JsValue, JsValue>;
-}
 
 #[cfg(target_arch = "wasm32")]
 fn tauri_object() -> Result<JsValue, String> {
@@ -70,24 +63,6 @@ where
     A: Serialize,
 {
     invoke::<serde_json::Value, _>(cmd, args).await.map(|_| ())
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn listen(event: &str, callback: impl FnMut(JsValue) + 'static) -> Result<(), String> {
-    tauri_object()?;
-    let handler = Closure::wrap(Box::new(callback) as Box<dyn FnMut(JsValue)>);
-    tauri_listen(event, handler.as_ref().unchecked_ref())
-        .await
-        .map_err(js_error_to_string)?;
-    handler.forget();
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn event_payload<T: DeserializeOwned>(event: JsValue) -> Result<T, String> {
-    let payload =
-        js_sys::Reflect::get(&event, &JsValue::from_str("payload")).map_err(js_error_to_string)?;
-    serde_wasm_bindgen::from_value(payload).map_err(|error| error.to_string())
 }
 
 #[cfg(target_arch = "wasm32")]

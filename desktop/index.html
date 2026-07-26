@@ -4,10 +4,34 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OpenCrabs</title>
-    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <link data-trunk rel="rust" data-wasm-opt="0" />
     <link data-trunk rel="css" href="src/css/app.css" />
+    <script>
+      window.__opencrabs_startup_error = null;
+      function showStartupFailure(error, source) {
+        const root = document.getElementById("main");
+        const message = error?.message || String(error || "Unknown startup error");
+        const stack = error?.stack || source || "";
+        window.__opencrabs_startup_error = { message, stack };
+        if (root && root.dataset.opencrabsMounted !== "true") {
+          root.innerHTML = `<section class="boot-failure"><h1>OpenCrabs could not start</h1><p>${message}</p><pre>${stack}</pre></section>`;
+        }
+      }
+      window.addEventListener("error", (event) => showStartupFailure(event.error || event.message, `${event.filename || ""}:${event.lineno || ""}`));
+      window.addEventListener("unhandledrejection", (event) => showStartupFailure(event.reason));
+      window.addEventListener("DOMContentLoaded", () => {
+        const root = document.getElementById("main");
+        const observer = root && new MutationObserver(() => {
+          if (!root.querySelector(".booting")) {
+            root.dataset.opencrabsMounted = "true";
+            observer.disconnect();
+          }
+        });
+        if (observer && root) observer.observe(root, { childList: true, subtree: true });
+      });
+    </script>
   </head>
   <body>
-    <div id="main"></div>
+    <div id="main"><section class="booting"><h1>OpenCrabs</h1><p>Starting desktop workspace…</p></section></div>
   </body>
 </html>

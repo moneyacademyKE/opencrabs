@@ -236,14 +236,18 @@ mod tests {
     #[test]
     fn reasoning_only_message_remains_inspectable() {
         let items = display_message_items("<mm:think>Check the database</mm:think>", None);
-        assert!(matches!(&items[..], [ChatDisplayItem::Text { content, reasoning: Some(reasoning) }] if content.is_empty() && reasoning == "Check the database"));
+        assert!(
+            matches!(&items[..], [ChatDisplayItem::Text { content, reasoning: Some(reasoning) }] if content.is_empty() && reasoning == "Check the database")
+        );
     }
 
     #[test]
     fn malformed_tool_marker_is_preserved_in_a_collapsed_fallback() {
         let items = display_message_items("Before<!-- tools-v2: [{not JSON}] -->After", None);
         assert!(matches!(&items[0], ChatDisplayItem::Text { content, .. } if content == "Before"));
-        assert!(matches!(&items[1], ChatDisplayItem::ProtocolFallback { label, content } if *label == "Unparsed tool activity" && content == "<!-- tools-v2: [{not JSON}] -->"));
+        assert!(
+            matches!(&items[1], ChatDisplayItem::ProtocolFallback { label, content } if *label == "Unparsed tool activity" && content == "<!-- tools-v2: [{not JSON}] -->")
+        );
         assert!(matches!(&items[2], ChatDisplayItem::Text { content, .. } if content == "After"));
     }
 
@@ -251,13 +255,17 @@ mod tests {
     fn unterminated_tool_marker_is_never_silently_dropped() {
         let items = display_message_items("Answer<!-- tools: Read config", None);
         assert!(matches!(&items[0], ChatDisplayItem::Text { content, .. } if content == "Answer"));
-        assert!(matches!(&items[1], ChatDisplayItem::ProtocolFallback { content, .. } if content == "<!-- tools: Read config"));
+        assert!(
+            matches!(&items[1], ChatDisplayItem::ProtocolFallback { content, .. } if content == "<!-- tools: Read config")
+        );
     }
 
     #[test]
     fn orphan_reasoning_closer_does_not_leak_to_the_answer() {
         let items = display_message_items("Answer</mm:think>", None);
-        assert!(matches!(&items[..], [ChatDisplayItem::Text { content, reasoning: None }] if content == "Answer"));
+        assert!(
+            matches!(&items[..], [ChatDisplayItem::Text { content, reasoning: None }] if content == "Answer")
+        );
     }
 
     #[test]
