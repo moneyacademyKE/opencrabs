@@ -66,7 +66,7 @@ Status legend:
 | `delete_cron_job` | partial | Destructive; should remain confirmation-gated. |
 | `toggle_cron_job` | ready | Desktop exposes enable/disable and refreshes the job list. |
 | `trigger_cron_job` | ready | Desktop exposes manual trigger. |
-| `list_cron_runs` | ready | Lists cron run history; run-history UI is not implemented yet. |
+| `list_cron_runs` | ready | Lists cron run history; desktop exposes a per-job history view after manual refresh or run. |
 | `get_channel_statuses` | partial | Reports enablement plus configuration/credential readiness. It does not claim a live connection. |
 | `toggle_channel` | ready | Desktop persists the change and refreshes channel status; runtime reconnect/reload is outside this command. |
 | `get_usage_data` | ready | Usage data is available for dashboard views. |

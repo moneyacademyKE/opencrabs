@@ -79,3 +79,14 @@ fn startup_promotes_chat_to_ready_before_secondary_panel_loads() {
     assert!(app_rs.contains("Files unavailable:"));
     assert!(app_rs.contains("Brain files unavailable:"));
 }
+
+#[test]
+fn bridge_preserves_the_tauri_core_receiver_and_named_args() {
+    let bridge_rs =
+        std::fs::read_to_string(repo_root().join("src/bridge.rs")).expect("read bridge.rs");
+
+    assert!(bridge_rs.contains(".call2(&core, &JsValue::from_str(cmd), &args)"));
+    assert!(bridge_rs.contains("JsFuture::from(tauri_core_invoke(cmd, args)?)"));
+    assert!(!bridge_rs.contains("tauri_invoke_without_args"));
+    assert!(!bridge_rs.contains("tauri_invoke_with_args"));
+}

@@ -196,7 +196,10 @@ pub async fn read_file_content(
 }
 #[tauri::command]
 pub async fn get_workspace_root(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(workspace_root_path(&state).await?.to_string_lossy().to_string())
+    Ok(workspace_root_path(&state)
+        .await?
+        .to_string_lossy()
+        .to_string())
 }
 
 #[cfg(test)]

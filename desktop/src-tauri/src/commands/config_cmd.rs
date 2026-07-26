@@ -191,21 +191,28 @@ pub async fn get_providers(state: State<'_, AppState>) -> Result<Vec<ProviderEnt
 
 #[tauri::command]
 pub async fn select_model(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     provider_name: String,
     model: String,
 ) -> Result<(), String> {
     let section = provider_section(&provider_name)?;
-    safe_config_write(&section, "default_model", &model)
+    safe_config_write(&section, "default_model", &model)?;
+    let refreshed = opencrabs::config::Config::load().map_err(|e| e.to_string())?;
+    *state.config.write().await = refreshed;
+    Ok(())
 }
+
 #[tauri::command]
 pub async fn update_config(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     section: String,
     key: String,
     value: String,
 ) -> Result<(), String> {
-    safe_config_write(&section, &key, &value)
+    safe_config_write(&section, &key, &value)?;
+    let refreshed = opencrabs::config::Config::load().map_err(|e| e.to_string())?;
+    *state.config.write().await = refreshed;
+    Ok(())
 }
 
 #[cfg(test)]

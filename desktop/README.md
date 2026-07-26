@@ -1,38 +1,46 @@
 # OpenCrabs Desktop UI
 
-This frontend is now a Dioxus WebAssembly app embedded in Tauri 2.
+OpenCrabs Desktop is a **Dioxus WebAssembly frontend embedded in a Tauri 2 native shell**. It is currently an unsigned, Apple-Silicon macOS preview: suitable for internal testing, not a stable signed release.
+
+## Run the native desktop app
+
+The desktop GUI must run inside Tauri. A browser-only Trunk preview can render the UI but cannot execute OpenCrabs desktop commands.
+
+```text
+cd /Users/moe/Desktop/crabz/desktop/src-tauri
+cargo tauri dev
+```
+
+Tauri starts the Trunk frontend automatically. To inspect only the frontend layout, run:
+
+```text
+cd /Users/moe/Desktop/crabz/desktop
+trunk serve --port 8080 --no-autoreload
+```
+
+Browser previews deliberately report that desktop actions require `cargo tauri dev`.
 
 ## Active structure
 
 - `src/main.rs` — Dioxus entry point
 - `src/app.rs` — routed shell and panel components
-- `src/bridge.rs` — Tauri invoke bridge for the wasm frontend
+- `src/bridge.rs` — native Tauri invoke/event bridge for the WASM frontend
 - `src/models.rs` — frontend DTOs matching Tauri command payloads
 - `src/css/app.css` — active desktop stylesheet
 - `src-tauri/` — native Tauri backend and command handlers
 
-## Frontend contract note
+The desktop DTO/command contract is documented in `desktop-command-contract.md`.
 
-The desktop DTO/command contract is documented in:
-
-- `desktop-command-contract.md`
-
-That file is the current truth source for which desktop commands are ready, partial, or unsupported.
-
-## Toolchain and bootstrap
-
-This project now treats toolchain versions as part of the product surface.
-
-### Required tools
+## Toolchain
 
 | Tool | Version expectation | Why |
 |---|---|---|
-| Rust | `1.91.0` | Matches the native Tauri crate `rust-version` and avoids drift between frontend/backend builds |
+| Rust | `1.91.0` | Matches the native Tauri crate `rust-version` |
 | `trunk` | `0.21.x` | Builds and serves the Dioxus WASM frontend |
-| `tauri-cli` | `2.x` | Provides the `cargo tauri` subcommand used to run and bundle the desktop shell |
-| Node | not required | This desktop path is Rust + Trunk, not a JS build stack |
+| `tauri-cli` | `2.x` | Provides the `cargo tauri` command |
+| Node | not required | This path is Rust + Trunk |
 
-### Recommended install
+Install the CLI tools with:
 
 ```text
 rustup toolchain install 1.91.0
@@ -41,135 +49,63 @@ cargo install trunk --version ^0.21 --locked
 cargo install tauri-cli --version ^2 --locked
 ```
 
-### Local development
+## Frontend ↔ native bridge
 
-From `desktop/`:
+The WASM bridge resolves `window.__TAURI__.core.invoke` at runtime and preserves the `core` receiver when invoking commands. It always forwards the serialized argument object, including named arguments such as `sessionId` for `get_session_messages`.
 
-```text
-trunk serve --port 8080 --no-autoreload
-```
+This matters because detached JavaScript method calls can lose their receiver and silently drop or mishandle IPC arguments. The bridge fails with an explicit native-runtime error when launched in a browser preview rather than pretending desktop controls are functional.
 
-From `desktop/src-tauri/` in another terminal:
+## CSP and Trunk assets
 
-```text
-cargo tauri dev
-```
+The Tauri CSP does **not** enable `unsafe-inline`. It pins the current Trunk WASM bootstrap module by SHA-256 and permits only self-hosted script/style assets. The stylesheet is declared as a Trunk-managed `data-trunk` asset, so a build must produce `dist/app.css`.
 
-Or let Tauri drive Trunk automatically:
+Development uses `trunk serve --no-autoreload`: Trunk's live-reload client is another inline script and is intentionally excluded rather than opening the CSP.
 
-```text
-cd src-tauri && cargo tauri dev
-```
+After changing the frontend or upgrading Trunk, validate the generated bootstrap hash against `src-tauri/tauri.conf.json`. A stale hash intentionally fails closed and can leave the native WebView blank.
 
-### Verification commands
+## Verification
 
-Frontend crate:
+Frontend crate, from `desktop/`:
 
 ```text
+cargo fmt --check
 cargo check --message-format short
 cargo test --message-format short
 trunk build --release
 ```
 
-Native shell:
+Native shell, from `desktop/src-tauri/`:
 
 ```text
-cd src-tauri && cargo check --message-format short
-cd src-tauri && cargo test --message-format short
-cd src-tauri && cargo tauri build
+cargo fmt --check
+cargo check --message-format short
+cargo test --message-format short
+cargo tauri build
 ```
 
-## Content-security policy and development server
-
-The Tauri CSP admits the current Trunk bootstrap module by SHA-256 hash; it does **not** enable `unsafe-inline`. The generated stylesheet is declared in `index.html` with `data-trunk`, so it is copied into `dist/app.css` for both development and release builds.
-
-The CSP hash is tied to the generated bootstrap. `trunk build` or `trunk serve` after a frontend change must produce a bootstrap whose hash matches `src-tauri/tauri.conf.json`; otherwise the native WebView deliberately fails closed. Development uses `trunk serve --no-autoreload` because Trunk's live-reload client is another generated inline script.
-
-
-## Release strategy
-
-### Current stance
-
-The desktop app is **bundle-ready but not auto-update-ready**.
-
-That means:
-
-- local desktop bundles are a supported target
-- in-app update *checking* is allowed
-- in-app update *installation* is intentionally deferred
-- release docs and config assume **signed manual distribution first**
-
-### Why updater install is deferred
-
-The backend currently exposes:
-
-- `check_for_updates` → partial
-- `install_update` → unsupported
-
-That is deliberate. Shipping a fake updater is worse than shipping none.
-
-Until desktop-native install/restart semantics are implemented and tested per platform, the release path is:
-
-1. build signed bundles
-2. publish release notes + artifacts
-3. let the desktop app report that an update exists
-4. direct the operator to upgrade via a new packaged release or OpenCrabs-native `/evolve` where appropriate
-
-### Initial production release policy
-
-| Area | Policy |
-|---|---|
-| Distribution | signed manual artifacts |
-| Channels | `dev`, `beta`, `stable` documented release lanes |
-| Auto-update install | deferred until native restart/install flow is real |
-| Update check UX | allowed, but must clearly state install is external/manual |
-| Rollback | reinstall previous signed artifact |
-
-## Packaging notes
-
-- Tauri bundle generation is enabled in `src-tauri/tauri.conf.json`
-- app identifiers and icons exist, but release signing/notarization is still an explicit production task
-- `dist/` is generated output and should not be hand-edited
-- release runbook: `docs/release-runbook.md`
-- release checklist: `docs/release-checklist.md`
-- release strategy note: `docs/release-strategy.md`
-
-## Release verification
-
-Run the complete release gate from `desktop/`:
+Run the complete gate from `desktop/`:
 
 ```text
 ./scripts/release-verify.sh
 ```
 
-The script enforces the correct crate directories and runs formatting, checks, tests, the Trunk release build, and Tauri packaging. It stops immediately with an install command when `trunk` or `tauri-cli` is absent.
+A Cargo command launched from a parent directory without the relevant `Cargo.toml` is an invocation error, not desktop verification evidence.
 
-## Verified release evidence (2026-07-25)
+## Release posture
 
-The following commands were run successfully in the correct directories:
+Desktop distribution is **manual bundles first**:
 
-- `cargo test --message-format short` in `desktop/` → **11 passed**
-- `cargo test --message-format short` in `desktop/src-tauri/` → **28 passed**
-- `cargo build --message-format short` in `desktop/` → passed
-- `cargo build --message-format short` in `desktop/src-tauri/` → passed
-- `trunk build --release -v` in `desktop/` → passed
-- `cargo tauri build` in `desktop/src-tauri/` → passed
+- update discovery may be available;
+- in-app update installation is intentionally unsupported;
+- stable releases require signed artifacts, checksums, and target-platform verification;
+- the current macOS preview is ARM64-only and unsigned, so Gatekeeper may require explicit approval.
 
-Produced artifacts:
+See `docs/release-strategy.md`, `docs/release-runbook.md`, `docs/release-checklist.md`, and `docs/diagnostics.md` for release and support details.
 
-- `src-tauri/target/release/bundle/macos/OpenCrabs.app`
-- `src-tauri/target/release/bundle/dmg/OpenCrabs_0.1.0_aarch64.dmg`
+## Known limitations
 
-## Production gates still external
-
-- run `./scripts/release-verify.sh` on every target platform;
-- sign and notarize/staple macOS artifacts before stable distribution;
-- sign Windows installers and publish checksums for every release;
-- keep desktop update installation unsupported until a tested native install/restart flow exists;
-- add a deliberate crash/debug-bundle export workflow if bounded diagnostics are insufficient for support.
-
-## Migration cleanup status
-
-Legacy pre-Dioxus frontend leftovers have been removed.
-
-The desktop project now has one active frontend path: the Dioxus app under `src/`.
+- Channel status reports configuration/credential readiness, not a live channel connection.
+- Provider cancellation is asynchronous and provider-specific.
+- Voice and native in-app update installation are explicitly unsupported.
+- Session rename/delete, cron creation/deletion/history, dynamic-tool removal, and privileged Brain/config edits need clearer confirmation and validation UX before stable distribution.
+- macOS code signing, notarization, stapling, fresh-install testing, and upgrade testing remain external release gates.

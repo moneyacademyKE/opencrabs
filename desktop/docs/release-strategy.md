@@ -4,14 +4,15 @@ This directory documents the current production release stance for the OpenCrabs
 
 ## Current release posture
 
-The desktop app supports **signed manual bundle distribution first**.
+The desktop app supports **signed manual bundle distribution first**. It does **not** self-install updates.
 
 What exists now:
 
 - Dioxus WASM frontend embedded in Tauri 2
-- `cargo tauri build` bundle path enabled
+- reproducible `cargo tauri build` bundle path, wrapped by `./scripts/release-verify.sh`
 - update discovery command (`check_for_updates`)
 - explicit non-support for in-app install (`install_update` returns an honest error)
+- macOS `.app` and `.dmg` bundle generation verified locally on 2026-07-26
 
 What does **not** exist yet:
 
@@ -26,15 +27,17 @@ What does **not** exist yet:
 |---|---|---|
 | `dev` | local engineering builds | may be unsigned/local-only |
 | `beta` | pre-release manual QA | signed whenever platform requires it |
-| `stable` | user-facing production release | signed artifacts required |
+| `stable` | user-facing production release | signed artifacts, checksums, and platform verification required |
 
 ## Distribution path
 
-1. Run repo verification commands.
-2. Build desktop bundles with `cargo tauri build`.
-3. Sign / notarize artifacts as required by platform.
-4. Publish release notes and artifacts.
-5. Desktop clients may detect a newer version, but installation happens outside the running app until updater install is implemented for real.
+1. Run `./scripts/release-verify.sh` from `desktop/`; it runs frontend checks/tests/release build, backend checks/tests, and `cargo tauri build` from their correct directories.
+2. Compute checksums for generated artifacts, for example: `shasum -a 256 src-tauri/target/release/bundle/dmg/*.dmg`.
+3. Sign and notarize artifacts as required by the target platform.
+4. Staple macOS notarization tickets before publishing (`xcrun stapler staple <app-or-dmg>`).
+5. Test a fresh install and an upgrade from the previous supported version.
+6. Publish release notes, signed artifacts, and checksums together.
+7. Desktop clients may detect a newer version, but installation happens outside the running app until updater install is implemented for real.
 
 ## Guardrails
 
@@ -47,20 +50,15 @@ What does **not** exist yet:
 
 Choose one before claiming desktop auto-update support:
 
-1. **Tauri updater**
-   - signed feed per platform
-   - download + verify + install + restart semantics
-   - per-platform QA required
-2. **OpenCrabs-managed updater wrapper**
-   - desktop delegates to a controlled OpenCrabs-native runtime path
-   - still requires explicit restart/install behavior
-3. **Remain manual**
-   - simplest and most honest if operational burden is acceptable
+1. **Tauri updater** — signed feed per platform; download, verify, install, and restart semantics; per-platform QA required.
+2. **OpenCrabs-managed updater wrapper** — desktop delegates to a controlled OpenCrabs-native runtime path; still requires explicit restart/install behavior.
+3. **Remain manual** — simplest and most honest if operational burden is acceptable.
 
 ## Release checklist seed
 
 - [ ] `./scripts/release-verify.sh` passes from `desktop/`
-- [ ] signing/notarization complete for target platform
-- [ ] release notes written
-- [ ] checksums generated and published
+- [ ] target-platform signing/notarization/stapling is complete
+- [ ] fresh-install and upgrade checks pass
+- [ ] release notes are written
+- [ ] SHA-256 checksums are generated and published
 - [ ] updater/install UX matches actual capability

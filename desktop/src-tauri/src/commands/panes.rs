@@ -85,12 +85,31 @@ fn state_path() -> PathBuf {
     opencrabs::config::opencrabs_home().join(PANE_STATE_FILE)
 }
 
+/// A corrupt optional UI-state file must never stop the desktop app from opening.
+/// Preserve it for diagnosis, then use a known-good empty state for this launch.
 fn load_store() -> Result<PaneStore, String> {
     let path = state_path();
     match fs::read_to_string(&path) {
-        Ok(contents) => {
-            toml::from_str(&contents).map_err(|error| format!("Invalid desktop state: {error}"))
-        }
+        Ok(contents) => match toml::from_str(&contents) {
+            Ok(store) => Ok(store),
+            Err(error) => {
+                let backup = path.with_extension("toml.corrupt");
+                if let Err(backup_error) = fs::rename(&path, &backup) {
+                    tracing::warn!(
+                        "Invalid desktop state at {} ({error}); failed to preserve it at {}: {backup_error}",
+                        path.display(),
+                        backup.display()
+                    );
+                } else {
+                    tracing::warn!(
+                        "Invalid desktop state at {} preserved at {}; using defaults: {error}",
+                        path.display(),
+                        backup.display()
+                    );
+                }
+                Ok(PaneStore::default())
+            }
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PaneStore::default()),
         Err(error) => Err(format!("Unable to read desktop state: {error}")),
     }

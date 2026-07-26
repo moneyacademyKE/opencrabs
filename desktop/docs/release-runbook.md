@@ -1,13 +1,14 @@
 # Production release runbook
 
-This runbook turns the current desktop app into a repeatable distributable artifact instead of a vibes-based build.
+This runbook makes the OpenCrabs desktop build repeatable instead of vibes-based.
 
 ## Supported shape
 
 - Frontend: Dioxus WebAssembly via Trunk
 - Native shell: Tauri 2
-- Distribution: signed manual bundles first
-- Update install: intentionally deferred until desktop-native apply/restart flow is implemented and tested
+- Distribution: manual bundles first
+- Current preview: unsigned Apple-Silicon macOS build
+- Update installation: intentionally unsupported
 
 ## Toolchain contract
 
@@ -17,15 +18,7 @@ This runbook turns the current desktop app into a repeatable distributable artif
 | `trunk` | `0.21.x` |
 | `tauri-cli` | `2.x` |
 
-These are pinned by:
-
-- `rust-toolchain.toml`
-- `README.md`
-- `src-tauri/Cargo.toml` metadata
-
-## Bootstrap
-
-From `desktop/`:
+Bootstrap from `desktop/`:
 
 ```text
 rustup toolchain install 1.91.0
@@ -34,15 +27,28 @@ cargo install trunk --version ^0.21 --locked
 cargo install tauri-cli --version ^2 --locked
 ```
 
-## Verification before release
+The installable package is `tauri-cli`; the command it provides is `cargo tauri`.
 
-From `desktop/`, run the single release gate:
+## Native development
+
+Run the GUI inside Tauri, not only in a browser preview:
+
+```text
+cd /Users/moe/Desktop/crabz/desktop/src-tauri
+cargo tauri dev
+```
+
+Tauri starts Trunk through `beforeDevCommand`. A browser-only preview is useful for layout inspection but cannot execute desktop IPC commands.
+
+## Release verification
+
+From `desktop/`, run the single gate:
 
 ```text
 ./scripts/release-verify.sh
 ```
 
-It runs, in the correct directories:
+It executes, from the correct crate directories:
 
 ```text
 cargo fmt --check
@@ -55,100 +61,68 @@ cd src-tauri && cargo test --message-format short
 cd src-tauri && cargo tauri build
 ```
 
-The script exits before building when `trunk` or `tauri-cli` is unavailable and prints the exact missing tool.
+A Cargo error from a parent directory without the relevant manifest is an invocation error, not a build verdict. Preserve successful command output with the release notes, target platform, artifact version, and signing evidence.
 
-## CSP and frontend asset verification
+## CSP and bridge contract
 
-The Tauri CSP allows the single SHA-256-pinned Trunk WebAssembly bootstrap module, not `unsafe-inline`. The Dioxus stylesheet is a Trunk-managed `data-trunk` CSS asset and must appear as `dist/app.css` after every frontend build.
+The Tauri CSP permits the current Trunk bootstrap only through a SHA-256 hash; it does not permit `unsafe-inline`. The generated stylesheet is a Trunk-managed `data-trunk` asset and must exist at `dist/app.css` after every build.
 
-Before packaging, verify both conditions:
+Before packaging:
 
 ```text
 trunk build --release
 test -f dist/app.css
 ```
 
-Development is deliberately run with `trunk serve --no-autoreload`; the live-reload client is an additional generated inline script and is excluded rather than broadly allowing inline JavaScript.
+Development uses `trunk serve --no-autoreload`, because Trunk's live-reload client is an additional inline script. If a Trunk upgrade or frontend build changes the generated bootstrap, update the one pinned hash in `src-tauri/tauri.conf.json`; do not weaken the CSP.
 
-If upgrading Trunk changes the bootstrap script, compute its SHA-256 base64 digest from the generated `dist/index.html` and update the single script hash in `src-tauri/tauri.conf.json`. Do not loosen the CSP to make an upgrade pass.
+The WASM bridge resolves `window.__TAURI__.core.invoke` at runtime, preserves `core` as the JavaScript receiver, and always passes the serialized arguments object. Named Tauri arguments, including `sessionId`, therefore reach native commands reliably.
 
+## Package and publish
 
-Run each command from the directory named in this runbook. A Cargo failure from a parent directory without the relevant manifest is an invocation error, not a build verdict. Preserve command output alongside the release notes, target platform, artifact version, and signing evidence.
-
-## Native runtime evidence (2026-07-25)
-
-A fresh `cargo tauri dev --no-watch` launch loaded the Tauri window and fetched the Trunk HTML, stylesheet, JavaScript, WebAssembly module, and Dioxus runtime snippets successfully. During this inspection, a stale bootstrap CSP hash was corrected. Keep the CSP hash in `src-tauri/tauri.conf.json` synchronized with the emitted Trunk bootstrap; stale hashes produce an intentionally blank/fail-closed WebView.
-
-
-These commands were run successfully:
-
-- `cargo test --message-format short` in `desktop/` → **11 passed**
-- `cargo test --message-format short` in `desktop/src-tauri/` → **28 passed**
-- `cargo build --message-format short` in `desktop/` → passed
-- `cargo build --message-format short` in `desktop/src-tauri/` → passed
-- `trunk build --release -v` in `desktop/` → passed
-- `cargo tauri build` in `desktop/src-tauri/` → passed
-
-Artifacts produced:
-
-- `src-tauri/target/release/bundle/macos/OpenCrabs.app`
-- `src-tauri/target/release/bundle/dmg/OpenCrabs_0.1.0_aarch64.dmg`
+1. Run `./scripts/release-verify.sh` from `desktop/`.
+2. Compute checksums, for example:
+   ```text
+   shasum -a 256 src-tauri/target/release/bundle/dmg/*.dmg
+   ```
+3. Sign and notarize platform artifacts.
+4. Staple macOS notarization tickets:
+   ```text
+   xcrun stapler staple <app-or-dmg>
+   ```
+5. Test a fresh install and upgrade from the previously supported version.
+6. Publish release notes, artifacts, and checksums together.
 
 ## Release lanes
 
 | Lane | Purpose | Rule |
 |---|---|---|
-| `dev` | local engineering builds | may be unsigned |
-| `beta` | pre-release QA | signed whenever platform requires it |
-| `stable` | production release | signed artifacts required |
+| `dev` | local engineering builds | may be unsigned/local-only |
+| `beta` | pre-release QA | signed whenever the platform requires it |
+| `stable` | user-facing production release | signed artifacts, checksums, and platform verification required |
 
 ## Current updater policy
 
-- `check_for_updates`: allowed
-- `install_update`: intentionally unsupported
-- GUI must not claim in-app install works
-- release notes must direct users to signed artifacts or OpenCrabs-native `/evolve` where appropriate
+- `check_for_updates`: partial; it may report available releases.
+- `install_update`: unsupported; no in-app native installer/restart path exists.
+- Do not expose an enabled Install button until the full download, verification, install, and restart lifecycle is implemented and tested.
+- `/evolve` is an OpenCrabs runtime upgrade path, not generic desktop-GUI updater UX.
 
 ## Platform signing tasks
 
 ### macOS
-- produce `.app` / `.dmg`
+
+- produce `.app` and `.dmg`
 - sign with Developer ID
 - notarize
-- staple notarization ticket
+- staple the notarization ticket
 
 ### Linux
-- produce target package(s) intentionally (`.AppImage`, `.deb`, etc.)
-- sign where your distribution channel expects it
+
+- produce intended package formats (`.AppImage`, `.deb`, etc.)
+- sign where the distribution channel requires it
 
 ### Windows
-- produce installer/bundle target intentionally
-- Authenticode sign before distribution
 
-## Artifact expectations
-
-Each release should have:
-
-- versioned desktop bundle(s)
-- release notes
-- checksum manifest
-- lane designation (`dev` / `beta` / `stable`)
-- explicit statement that update install is manual unless the updater contract changes
-
-## Guardrails
-
-Do not:
-
-- expose an enabled “Install update” button while install is unsupported
-- treat `/evolve` as generic desktop updater UX
-- ship unsigned stable artifacts
-- change Rust/Trunk/Tauri versions without updating the documented contract
-
-## Promotion checklist
-
-- [ ] verification commands green
-- [ ] desktop command contract still matches runtime behavior
-- [ ] signing/notarization complete for target platform
-- [ ] release notes written
-- [ ] artifact checksums generated
-- [ ] updater/install UX still honest
+- produce the intended installer/bundle
+- Authenticode-sign before distribution

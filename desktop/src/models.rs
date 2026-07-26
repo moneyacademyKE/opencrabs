@@ -103,6 +103,21 @@ pub struct CronJobInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CronJobRunInfo {
+    pub id: String,
+    pub job_id: String,
+    pub job_name: String,
+    pub status: String,
+    pub content: Option<String>,
+    pub error: Option<String>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cost: f64,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelStatus {
     pub name: String,
     pub display_name: String,

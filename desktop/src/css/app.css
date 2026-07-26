@@ -30,7 +30,7 @@ html,body { height:100%;overflow:hidden;font:14px var(--font);color:var(--text-p
 button { font:inherit;cursor:pointer;border:none;background:none;color:inherit; }
 button:disabled { opacity:.4;cursor:not-allowed; }
 input,textarea,select { font:inherit;color:var(--text-primary);background:var(--bg-tertiary);border:1px solid var(--border-primary);border-radius:var(--radius-sm);padding:8px 12px; }
-input:focus,textarea:focus { outline:none;border-color:var(--accent); }
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
 code { font:0.9em var(--mono);background:var(--bg-tertiary);padding:1px 4px;border-radius:3px; }
 
 #app { display:flex;height:100vh; }
@@ -80,7 +80,9 @@ h3 { font-size:14px;font-weight:600;margin:12px 0 8px; }
 .btn { padding:6px 14px;border-radius:var(--radius-sm);background:var(--bg-hover);font-size:13px; }
 .btn:hover { background:var(--border-primary); }
 .btn-small { padding:3px 10px;border-radius:var(--radius-sm);background:var(--bg-hover);font-size:11px; }
-.btn-small:hover { background:var(--border-primary); }
+
+.btn-small.danger { color:var(--text-error); }
+.btn-small.danger:hover { background:rgba(248,81,73,.15); }
 
 .chat-panel { flex:1;display:flex;flex-direction:column;height:100%; }
 .chat-header { display:flex;align-items:center;justify-content:space-between;padding:0 20px;min-height:48px;border-bottom:1px solid var(--border-secondary); }
@@ -145,6 +147,39 @@ h3 { font-size:14px;font-weight:600;margin:12px 0 8px; }
 .file-preview { flex:1;padding:0 0 0 16px;overflow-y:auto; }
 .file-preview h3 { font-family:var(--mono);font-size:14px;margin-bottom:12px; }
 
+.empty-state { border:1px dashed var(--border-primary); border-radius:var(--radius-md); padding:28px 20px; color:var(--text-secondary); text-align:center; background:var(--bg-secondary); }
+.empty-state h3 { color:var(--text-primary); margin-top:0; }
+.subtle { color:var(--text-secondary); line-height:1.5; }
+.error { color:var(--text-error); line-height:1.5; }
+
+
+/* Active Dioxus shell. Keep the app a single flex viewport so panel controls never
+   sit behind a scrolling sibling or outside the WebView hit-test area. */
+#main, .app-shell { min-height:100vh; }
+.app-shell { display:grid;grid-template-columns:var(--nav-width) var(--sidebar-width) minmax(0,1fr);grid-template-rows:auto 1fr;overflow:hidden;background:var(--bg-primary); }
+.topbar { grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;min-height:64px;padding:10px 18px;background:var(--bg-secondary);border-bottom:1px solid var(--border-primary); }
+.brand { display:flex;align-items:center;gap:10px; }
+.brand-mark { font-size:24px;line-height:1; }
+.brand h1 { margin:0;font-size:16px; }
+.brand p { margin-top:2px;color:var(--text-secondary);font-size:12px; }
+.top-actions { display:flex;align-items:center;gap:6px; }
+.tabs { grid-column:1;grid-row:2;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0;background:var(--bg-secondary);border-right:1px solid var(--border-primary); }
+.tab { width:40px;height:40px;border-radius:var(--radius-md);font-size:18px;transition:background var(--transition),transform 120ms ease,color var(--transition); }
+.tab:hover { background:var(--bg-hover); }
+.tab:active,.btn-primary:active,.btn-new:active,.btn-small:active,.btn-send:active { transform:scale(.97); }
+.tab.active { background:var(--bg-active);color:var(--accent); }
+.app-shell > .sidebar { grid-column:2;grid-row:2; }
+.app-shell > .panel-container { grid-column:3;grid-row:2;min-width:0;min-height:0;padding:20px; }
+.btn-secondary { padding:6px 14px;border-radius:var(--radius-sm);background:var(--bg-hover);font-size:13px; }
+.btn-secondary:hover { background:var(--border-primary); }
+.files-layout { display:grid;grid-template-columns:minmax(220px, .8fr) minmax(0, 2fr);gap:16px; }
+.file-list { max-height:calc(100vh - 230px);overflow-y:auto; }
+@media (max-width: 760px) {
+  html, body { overflow:auto; }
+  .app-shell { min-width:720px; }
+  .sidebar { width:220px; min-width:220px; }
+  .summary-grid { grid-template-columns:repeat(2,1fr); }
+}
 .onboarding-overlay { position:fixed;inset:0;z-index:200;background:var(--bg-primary);display:flex;align-items:center;justify-content:center; }
 .onboarding-container { width:560px;max-width:90vw;text-align:center; }
 .onboarding-progress { display:flex;gap:8px;justify-content:center;margin-bottom:24px; }

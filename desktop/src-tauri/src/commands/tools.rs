@@ -100,7 +100,7 @@ pub async fn get_tool_details(
 
 #[tauri::command]
 pub async fn approve_tool(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     _session_id: String,
     tool_name: String,
     approved: bool,
@@ -117,7 +117,9 @@ pub async fn approve_tool(
     };
     opencrabs::config::Config::write_key("agent", "approval_policy", policy)
         .map_err(|e| e.to_string())?;
-    tracing::info!("Desktop tool approval policy updated for {tool_name}: {policy}");
+    let refreshed = opencrabs::config::Config::load().map_err(|e| e.to_string())?;
+    *state.config.write().await = refreshed;
+    tracing::info!(tool_name, policy, "Desktop tool approval policy updated");
     Ok(())
 }
 

@@ -1,60 +1,54 @@
 # Release readiness checklist
 
-Use this before calling the desktop app production-ready.
+Use this before promoting OpenCrabs Desktop beyond a preview.
 
-## Security
+## Native runtime
 
-- [x] CSP keeps `style-src 'self'`; its only inline-script exception is a SHA-256 hash for the current Trunk WebAssembly bootstrap module. Development disables Trunk autoreload so it does not require an additional inline reload client. The bootstrap hash was revalidated after native runtime inspection on 2026-07-25.
-- [x] no raw HTML rendering of untrusted model/provider output
-- [x] file read/write/list commands enforce allowlisted roots and containment
-- [x] config writes remain explicitly allowlisted
-- [x] secrets are masked in UI/logs and only written through constrained codepaths
-- [x] Tauri capabilities/plugins reviewed for least privilege; unused shell/dialog/fs plugins and broad capability grants were removed
-
-## Backend truthfulness
-
-- [x] every exposed desktop command is marked ready / partial / unsupported in `desktop-command-contract.md`
-- [x] unsupported commands fail honestly, not with fake success
-- [x] health checks report observable filesystem/config/tool state rather than hardcoded placeholders
-- [x] update/install UX matches actual capability
-- [x] voice UX matches actual capability
+- [ ] Launch the native shell with `cd desktop/src-tauri && cargo tauri dev`.
+- [ ] Confirm the Dioxus shell renders and status reaches its ready state.
+- [ ] Select a session and confirm `get_session_messages` receives its named `sessionId` argument.
+- [ ] Exercise at least one mutation and confirm success or actionable failure feedback.
+- [ ] Inspect the native WebView console when a runtime action fails.
 
 ## Verification
 
-- [x] `cargo fmt --check`, `cargo check --message-format short`, and `cargo test --message-format short` pass in `desktop/` (2026-07-25)
-- [x] `trunk build --release -v` passes in `desktop/` (2026-07-25)
-- [x] `cargo fmt --check`, `cargo check --message-format short`, and `cargo test --message-format short` pass in `desktop/src-tauri/` (2026-07-25)
-- [x] `cargo tauri build` passes in `desktop/src-tauri/` and produces `.app` and `.dmg` artifacts (2026-07-25)
-- [ ] Run `./scripts/release-verify.sh` from `desktop/` on each release target and attach its output to release notes
+- [ ] Run `./scripts/release-verify.sh` from `desktop/` on the release target.
+- [ ] Record command output, platform, Git commit, and artifact version with release notes.
+- [ ] Confirm `trunk build --release` emitted `dist/app.css`.
+- [ ] Confirm the Trunk bootstrap hash matches `src-tauri/tauri.conf.json`.
+- [ ] Repeat on every supported target platform before stable distribution.
 
-## Verification evidence
+## Security
 
-The commands below must be run from their named project directories. A Cargo invocation from a parent directory that does not contain the relevant `Cargo.toml` is not release evidence.
+- [x] CSP keeps `style-src 'self'` and admits only the SHA-256-pinned Trunk bootstrap; no `unsafe-inline`.
+- [x] untrusted model/provider output is not rendered as raw HTML.
+- [x] file read/write/list commands enforce allowlisted roots and containment.
+- [x] config writes remain explicitly allowlisted.
+- [x] secrets are masked in UI/logs and written only through constrained codepaths.
+- [x] unused shell/dialog/fs plugins and broad capabilities were removed.
 
-- Frontend crate: run the frontend commands from `desktop/`.
-- Native shell: run the native commands from `desktop/src-tauri/`.
-- Record the command output, target platform, and artifact version with the release notes.
+## Backend truthfulness
+
+- [x] desktop commands are marked ready, partial, or unsupported in `desktop-command-contract.md`.
+- [x] unsupported commands fail honestly rather than returning fake success.
+- [x] health checks expose observable filesystem/config/tool state.
+- [x] voice and update-install surfaces state their unsupported status.
+- [ ] Channel UI continues to distinguish credential readiness from live connectivity.
 
 ## Distribution
 
-- [ ] lane chosen: `dev`, `beta`, or `stable`
-- [ ] signed artifacts produced for the target platform(s)
-- [ ] notarization/stapling complete where required
-- [ ] release notes written
-- [ ] checksums generated and published
-- [ ] rollback story documented
+- [ ] Choose the `dev`, `beta`, or `stable` lane.
+- [ ] Produce signed artifacts for the target platform.
+- [ ] Complete macOS notarization and stapling where applicable.
+- [ ] Test fresh installation and upgrade from the prior supported release.
+- [ ] Publish release notes and SHA-256 checksums.
+- [ ] Document rollback for the selected release lane.
 
-## Observability
+## Observability and UX
 
-- [x] frontend failures are visible and actionable
-- [x] backend command failures are propagated with enough context for diagnostics
-- [x] bounded, credential-redacted diagnostics snapshot exists
-- [x] crash/debug bundle export is explicitly deferred; support uses the bounded snapshot and release runbook
-
-## UX state
-
-- [x] full pane split-tree, focus, and pane/session mapping persist across restart
-- [x] last active route and selected session persist with safe fallback for invalid state
-- [ ] loading / empty / offline states are deliberate across every panel
-- [x] dangerous and partial actions are explicitly communicated
-- [ ] accessibility baseline is reviewed
+- [x] frontend/backend action failures surface enough detail for bounded diagnostics.
+- [x] a credential-redacted diagnostics snapshot exists.
+- [ ] Verify diagnostics handling against at least one real failure mode.
+- [ ] Review loading, empty, and offline states for every panel.
+- [ ] Complete keyboard, focus, contrast, and reduced-motion accessibility review.
+- [ ] Confirm destructive actions retain explicit confirmation.

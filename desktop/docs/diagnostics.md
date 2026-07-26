@@ -10,7 +10,7 @@ The Usage panel exposes a **Diagnostics** card. It invokes `get_diagnostics` and
 
 ## Safety boundary
 
-The diagnostics command does not export arbitrary files and does not read config or database contents. Log previews are capped at 128 KiB and 120 lines. Lines containing common credential patterns (`api_key`, `Authorization:`, `Bearer `, or `token=`) are omitted before the UI receives them.
+The diagnostics command does not export arbitrary files and does not read config or database contents. Log previews are capped at 128 KiB and 120 lines. Lines containing common credential patterns (`api_key`, `api-key`, `x-api-key`, `Authorization:`, `Bearer `, `token=`, `secret`, or `password`) are omitted before the UI receives them.
 
 ## Current limitations
 

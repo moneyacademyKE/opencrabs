@@ -2,6 +2,7 @@ use opencrabs_desktop_ui::bridge::{invoke, invoke_unit};
 use opencrabs_desktop_ui::models::*;
 
 use dioxus::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -116,22 +117,26 @@ struct StreamState {
     pending_message_id: Option<String>,
 }
 
+#[cfg(target_arch = "wasm32")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StreamChunkPayload {
     text: String,
 }
 
+#[cfg(target_arch = "wasm32")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StreamDonePayload {
     message_id: String,
 }
 
+#[cfg(target_arch = "wasm32")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StreamStoppedPayload {
     session_id: String,
     message_id: String,
 }
 
+#[cfg(target_arch = "wasm32")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct StreamErrorPayload {
     error: String,
@@ -307,6 +312,7 @@ pub fn App() -> Element {
     let skills = use_signal(Vec::<SkillInfo>::new);
     let selected_skill = use_signal(|| None::<SkillDetail>);
     let cron_jobs = use_signal(Vec::<CronJobInfo>::new);
+    let cron_runs = use_signal(Vec::<CronJobRunInfo>::new);
     let channels = use_signal(Vec::<ChannelStatus>::new);
     let usage = use_signal(|| None::<DashboardDataInfo>);
     let status = use_signal(|| "Loading…".to_string());
@@ -549,7 +555,14 @@ pub fn App() -> Element {
                                     selected_session_id: selected_session.read().clone(),
                                 };
                                 spawn(async move {
-                                    let _ = invoke_unit("save_desktop_state", json!({"state": state})).await;
+                                    match invoke_unit("save_desktop_state", json!({"state": state})).await {
+                                        Ok(()) => clear_action_error(&mut action_errors, "desktop-state"),
+                                        Err(message) => set_action_error(
+                                            &mut action_errors,
+                                            "desktop-state",
+                                            format!("Failed to save desktop view: {message}"),
+                                        ),
+                                    }
                                 });
                             }
                         },
@@ -573,16 +586,28 @@ pub fn App() -> Element {
                                         stream_state.set(StreamState::default());
                                         let state = DesktopState {
                                             route: route.read().as_str().to_string(),
-                                            selected_session_id: Some(session.id),
+                                            selected_session_id: Some(session.id.clone()),
                                         };
-                                        let _ = invoke_unit("save_desktop_state", json!({"state": state})).await;
-                                        if let Ok(messages) = invoke::<Vec<MessageInfo>, _>(
+                                        match invoke_unit("save_desktop_state", json!({"state": state})).await {
+                                            Ok(()) => clear_action_error(&mut action_errors, "desktop-state"),
+                                            Err(message) => set_action_error(
+                                                &mut action_errors,
+                                                "desktop-state",
+                                                format!("Failed to save selected session: {message}"),
+                                            ),
+                                        }
+                                        match invoke::<Vec<MessageInfo>, _>(
                                             "get_session_messages",
-                                            json!({"sessionId": selected_session.read().clone().unwrap_or_default()}),
+                                            json!({"sessionId": session.id.clone()}),
                                         )
                                         .await
                                         {
-                                            session_messages.set(messages);
+                                            Ok(messages) => session_messages.set(messages),
+                                            Err(message) => set_action_error(
+                                                &mut action_errors,
+                                                "sessions-create",
+                                                format!("Session created, but messages could not load: {message}"),
+                                            ),
                                         }
                                     }
                                     Err(message) => set_action_error(
@@ -618,14 +643,29 @@ pub fn App() -> Element {
                                         selected_session_id: Some(id_for_state),
                                     };
                                     spawn(async move {
-                                        let _ = invoke_unit("save_desktop_state", json!({"state": state})).await;
-                                        if let Ok(messages) = invoke::<Vec<MessageInfo>, _>(
+                                        match invoke_unit("save_desktop_state", json!({"state": state})).await {
+                                            Ok(()) => clear_action_error(&mut action_errors, "desktop-state"),
+                                            Err(message) => set_action_error(
+                                                &mut action_errors,
+                                                "desktop-state",
+                                                format!("Failed to save selected session: {message}"),
+                                            ),
+                                        }
+                                        match invoke::<Vec<MessageInfo>, _>(
                                             "get_session_messages",
                                             json!({"sessionId": id_for_messages}),
                                         )
                                         .await
                                         {
-                                            session_messages.set(messages);
+                                            Ok(messages) => {
+                                                session_messages.set(messages);
+                                                clear_action_error(&mut action_errors, "sessions-load");
+                                            }
+                                            Err(message) => set_action_error(
+                                                &mut action_errors,
+                                                "sessions-load",
+                                                format!("Failed to load selected session: {message}"),
+                                            ),
                                         }
                                     });
                                 }
@@ -879,9 +919,16 @@ pub fn App() -> Element {
                                     .await
                                     {
                                         Ok(()) => {
-                                            clear_action_error(&mut action_errors, "providers-select");
-                                            if let Ok(cfg) = invoke::<ConfigInfo, _>("get_config", json!({})).await {
-                                                config_info.set(Some(cfg));
+                                            match invoke::<ConfigInfo, _>("get_config", json!({})).await {
+                                                Ok(cfg) => {
+                                                    config_info.set(Some(cfg));
+                                                    clear_action_error(&mut action_errors, "providers-select");
+                                                }
+                                                Err(message) => set_action_error(
+                                                    &mut action_errors,
+                                                    "providers-select",
+                                                    format!("Model selected, but provider refresh failed: {message}"),
+                                                ),
                                             }
                                         }
                                         Err(message) => set_action_error(
@@ -969,12 +1016,27 @@ pub fn App() -> Element {
                                 spawn(async move {
                                     match invoke_unit("toggle_skill", json!({"name": name.clone(), "enabled": enabled})).await {
                                         Ok(()) => {
-                                            clear_action_error(&mut action_errors, "skills-toggle");
-                                            if let Ok(list) = invoke::<Vec<SkillInfo>, _>("list_skills", json!({})).await {
-                                                skills.set(list);
+                                            match invoke::<Vec<SkillInfo>, _>("list_skills", json!({})).await {
+                                                Ok(list) => skills.set(list),
+                                                Err(message) => {
+                                                    set_action_error(
+                                                        &mut action_errors,
+                                                        "skills-toggle",
+                                                        format!("Skill changed, but list refresh failed: {message}"),
+                                                    );
+                                                    return;
+                                                }
                                             }
-                                            if let Ok(detail) = invoke::<SkillDetail, _>("get_skill_details", json!({"name": name.clone()})).await {
-                                                selected_skill.set(Some(detail));
+                                            match invoke::<SkillDetail, _>("get_skill_details", json!({"name": name.clone()})).await {
+                                                Ok(detail) => {
+                                                    selected_skill.set(Some(detail));
+                                                    clear_action_error(&mut action_errors, "skills-toggle");
+                                                }
+                                                Err(message) => set_action_error(
+                                                    &mut action_errors,
+                                                    "skills-toggle",
+                                                    format!("Skill changed, but detail refresh failed: {message}"),
+                                                ),
                                             }
                                         }
                                         Err(message) => set_action_error(
@@ -990,35 +1052,54 @@ pub fn App() -> Element {
                     RouteId::Cron => rsx! {
                         CronPanel {
                             jobs: cron_jobs.read().clone(),
+                            runs: cron_runs.read().clone(),
                             on_toggle: move |(job_id, enabled): (String, bool)| {
                                 let mut cron_jobs = cron_jobs;
                                 let mut action_errors = action_errors;
                                 spawn(async move {
                                     match invoke_unit("toggle_cron_job", json!({"jobId": job_id.clone(), "enabled": enabled})).await {
-                                        Ok(()) => {
-                                            clear_action_error(&mut action_errors, "cron-toggle");
-                                            if let Ok(list) = invoke::<Vec<CronJobInfo>, _>("list_cron_jobs", json!({})).await {
-                                                cron_jobs.set(list);
-                                            }
-                                        }
-                                        Err(message) => set_action_error(
-                                            &mut action_errors,
-                                            "cron-toggle",
-                                            format!("Failed to toggle cron job {job_id}: {message}"),
-                                        ),
+                                        Ok(()) => match invoke::<Vec<CronJobInfo>, _>("list_cron_jobs", json!({})).await {
+                                            Ok(list) => { cron_jobs.set(list); clear_action_error(&mut action_errors, "cron-toggle"); }
+                                            Err(message) => set_action_error(&mut action_errors, "cron-toggle", format!("Cron changed, but refresh failed: {message}")),
+                                        },
+                                        Err(message) => set_action_error(&mut action_errors, "cron-toggle", format!("Failed to toggle cron job {job_id}: {message}")),
                                     }
                                 });
                             },
                             on_run_now: move |job_id: String| {
+                                let mut cron_runs = cron_runs;
                                 let mut action_errors = action_errors;
                                 spawn(async move {
                                     match invoke_unit("trigger_cron_job", json!({"jobId": job_id.clone()})).await {
-                                        Ok(()) => clear_action_error(&mut action_errors, "cron-run"),
-                                        Err(message) => set_action_error(
-                                            &mut action_errors,
-                                            "cron-run",
-                                            format!("Failed to trigger cron job {job_id}: {message}"),
-                                        ),
+                                        Ok(()) => match invoke::<Vec<CronJobRunInfo>, _>("list_cron_runs", json!({"jobId": job_id})).await {
+                                            Ok(runs) => { cron_runs.set(runs); clear_action_error(&mut action_errors, "cron-run"); }
+                                            Err(message) => set_action_error(&mut action_errors, "cron-run", format!("Cron triggered, but history refresh failed: {message}")),
+                                        },
+                                        Err(message) => set_action_error(&mut action_errors, "cron-run", format!("Failed to trigger cron job {job_id}: {message}")),
+                                    }
+                                });
+                            },
+                            on_show_runs: move |job_id: String| {
+                                let mut cron_runs = cron_runs;
+                                let mut action_errors = action_errors;
+                                spawn(async move {
+                                    match invoke::<Vec<CronJobRunInfo>, _>("list_cron_runs", json!({"jobId": job_id.clone()})).await {
+                                        Ok(runs) => { cron_runs.set(runs); clear_action_error(&mut action_errors, "cron-runs"); }
+                                        Err(message) => set_action_error(&mut action_errors, "cron-runs", format!("Failed to load runs for {job_id}: {message}")),
+                                    }
+                                });
+                            },
+                            on_delete: move |job_id: String| {
+                                let mut cron_jobs = cron_jobs;
+                                let mut cron_runs = cron_runs;
+                                let mut action_errors = action_errors;
+                                spawn(async move {
+                                    match invoke_unit("delete_cron_job", json!({"jobId": job_id.clone()})).await {
+                                        Ok(()) => match invoke::<Vec<CronJobInfo>, _>("list_cron_jobs", json!({})).await {
+                                            Ok(list) => { cron_jobs.set(list); cron_runs.set(Vec::new()); clear_action_error(&mut action_errors, "cron-delete"); }
+                                            Err(message) => set_action_error(&mut action_errors, "cron-delete", format!("Cron job deleted, but refresh failed: {message}")),
+                                        },
+                                        Err(message) => set_action_error(&mut action_errors, "cron-delete", format!("Failed to delete cron job {job_id}: {message}")),
                                     }
                                 });
                             }
@@ -1032,12 +1113,17 @@ pub fn App() -> Element {
                                 let mut action_errors = action_errors;
                                 spawn(async move {
                                     match invoke_unit("toggle_channel", json!({"name": name.clone(), "enabled": enabled})).await {
-                                        Ok(()) => {
-                                            clear_action_error(&mut action_errors, "channels-toggle");
-                                            if let Ok(list) = invoke::<Vec<ChannelStatus>, _>("get_channel_statuses", json!({})).await {
+                                        Ok(()) => match invoke::<Vec<ChannelStatus>, _>("get_channel_statuses", json!({})).await {
+                                            Ok(list) => {
                                                 channels.set(list);
+                                                clear_action_error(&mut action_errors, "channels-toggle");
                                             }
-                                        }
+                                            Err(message) => set_action_error(
+                                                &mut action_errors,
+                                                "channels-toggle",
+                                                format!("Channel changed, but status refresh failed: {message}"),
+                                            ),
+                                        },
                                         Err(message) => set_action_error(
                                             &mut action_errors,
                                             "channels-toggle",
@@ -1365,50 +1451,69 @@ fn SkillsPanel(
 #[component]
 fn CronPanel(
     jobs: Vec<CronJobInfo>,
+    runs: Vec<CronJobRunInfo>,
     on_toggle: EventHandler<(String, bool)>,
     on_run_now: EventHandler<String>,
+    on_show_runs: EventHandler<String>,
+    on_delete: EventHandler<String>,
 ) -> Element {
+    let mut pending_delete = use_signal(|| None::<String>);
+
     rsx! {
         div {
             div { class: "panel-header",
                 h2 { "Cron jobs" }
                 span { class: "badge", "{jobs.len()} scheduled" }
             }
-            div { class: "table-container",
-                table { class: "data-table",
-                    thead {
-                        tr {
-                            th { "Name" }
-                            th { "Schedule" }
-                            th { "Provider" }
-                            th { "Enabled" }
-                            th { "Actions" }
+            div { class: "card", style: "margin-bottom: 16px;",
+                p { class: "subtle", "Run history is read-only. Deleting a job permanently removes its schedule." }
+            }
+            if jobs.is_empty() {
+                div { class: "empty-state",
+                    h3 { "No scheduled jobs" }
+                    p { "Schedules created through OpenCrabs will appear here with their run history." }
+                }
+            } else {
+                div { class: "table-container",
+                    table { class: "data-table",
+                        thead { tr { th { "Name" } th { "Schedule" } th { "Provider" } th { "Enabled" } th { "Actions" } } }
+                        tbody {
+                            for job in jobs.iter() {
+                                tr {
+                                    td { "{job.name}" }
+                                    td { "{job.cron_expr}" }
+                                    td { "{job.provider.as_deref().unwrap_or(\"default\")}" }
+                                    td { if job.enabled { "yes" } else { "no" } }
+                                    td {
+                                        button { class: "btn-small", onclick: { let id = job.id.clone(); let next = !job.enabled; move |_| on_toggle.call((id.clone(), next)) }, if job.enabled { "Disable" } else { "Enable" } }
+                                        button { class: "btn-small", onclick: { let id = job.id.clone(); move |_| on_run_now.call(id.clone()) }, "Run now" }
+                                        button { class: "btn-small", onclick: { let id = job.id.clone(); move |_| on_show_runs.call(id.clone()) }, "History" }
+                                        if pending_delete.read().as_deref() == Some(job.id.as_str()) {
+                                            button { class: "btn-small danger", onclick: { let id = job.id.clone(); move |_| { on_delete.call(id.clone()); pending_delete.set(None); } }, "Confirm delete" }
+                                            button { class: "btn-small", onclick: move |_| pending_delete.set(None), "Cancel" }
+                                        } else {
+                                            button { class: "btn-small danger", onclick: { let id = job.id.clone(); move |_| pending_delete.set(Some(id.clone())) }, "Delete…" }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                    tbody {
-                        for job in jobs.iter() {
-                            tr {
-                                td { "{job.name}" }
-                                td { "{job.cron_expr}" }
-                                td { "{job.provider.as_deref().unwrap_or(\"default\")}" }
-                                td { if job.enabled { "yes" } else { "no" } }
-                                td {
-                                    button {
-                                        class: "btn-small",
-                                        onclick: {
-                                            let id = job.id.clone();
-                                            let next = !job.enabled;
-                                            move |_| on_toggle.call((id.clone(), next))
-                                        },
-                                        if job.enabled { "Disable" } else { "Enable" }
-                                    }
-                                    button {
-                                        class: "btn-small",
-                                        onclick: {
-                                            let id = job.id.clone();
-                                            move |_| on_run_now.call(id.clone())
-                                        },
-                                        "Run now"
+                }
+            }
+            if !runs.is_empty() {
+                div { class: "card", style: "margin-top: 16px;",
+                    h3 { "Recent runs" }
+                    div { class: "table-container",
+                        table { class: "data-table",
+                            thead { tr { th { "Status" } th { "Started" } th { "Tokens" } th { "Error" } } }
+                            tbody {
+                                for run in runs.iter() {
+                                    tr {
+                                        td { "{run.status}" }
+                                        td { "{run.started_at}" }
+                                        td { "{run.input_tokens + run.output_tokens}" }
+                                        td { "{run.error.as_deref().unwrap_or(\"—\")}" }
                                     }
                                 }
                             }

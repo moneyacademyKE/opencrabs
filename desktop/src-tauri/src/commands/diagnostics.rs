@@ -25,9 +25,18 @@ fn today_log_path() -> PathBuf {
 
 fn sensitive_line(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
-    ["api_key", "authorization:", "bearer ", "token="]
-        .iter()
-        .any(|needle| lower.contains(needle))
+    [
+        "api_key",
+        "secret",
+        "password",
+        "api-key",
+        "x-api-key",
+        "authorization:",
+        "bearer ",
+        "token=",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn safe_log_tail(path: &PathBuf) -> Result<Vec<String>, String> {
@@ -93,6 +102,8 @@ mod tests {
     fn credential_bearing_log_lines_are_excluded() {
         assert!(sensitive_line("api_key=shh"));
         assert!(sensitive_line("Authorization: Bearer shh"));
+        assert!(sensitive_line("password=shh"));
+        assert!(sensitive_line("x-api-key: shh"));
         assert!(!sensitive_line("request completed in 4ms"));
     }
 
