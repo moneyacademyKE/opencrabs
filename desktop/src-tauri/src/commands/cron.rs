@@ -1,7 +1,45 @@
 use crate::AppState;
-use serde::Serialize;
+use crate::commands::validation::bounded_text;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
+
+/// Bounded payload for creating a cron job. Collapsing the positional command
+/// arguments into a single deserialized struct keeps the IPC contract explicit
+/// and lets us validate the whole mutation in one place before it is stored.
+#[derive(Deserialize)]
+pub struct CronJobInput {
+    pub name: String,
+    pub cron_expr: String,
+    pub timezone: String,
+    pub prompt: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub auto_approve: bool,
+    pub deliver_to: Option<String>,
+}
+
+/// Validate a cron-job payload before it reaches the scheduler table. We bound
+/// every field and reject empty/control-character inputs; precise cron-syntax
+/// parsing remains the scheduler's responsibility, but these guards stop the
+/// unbounded and crash-inducing cases a raw command surface would otherwise
+/// accept.
+fn validate_cron_job_input(input: &CronJobInput) -> Result<(), String> {
+    bounded_text("name", &input.name, 128)?;
+    bounded_text("cron expression", &input.cron_expr, 128)?;
+    bounded_text("timezone", &input.timezone, 64)?;
+    bounded_text("prompt", &input.prompt, 8000)?;
+    if let Some(provider) = &input.provider {
+        bounded_text("provider", provider, 64)?;
+    }
+    if let Some(model) = &input.model {
+        bounded_text("model", model, 128)?;
+    }
+    if let Some(deliver_to) = &input.deliver_to {
+        bounded_text("deliver_to", deliver_to, 256)?;
+    }
+    Ok(())
+}
 
 #[derive(Serialize)]
 pub struct CronJobInfo {
@@ -85,30 +123,24 @@ pub async fn list_cron_jobs(state: State<'_, AppState>) -> Result<Vec<CronJobInf
 #[tauri::command]
 pub async fn create_cron_job(
     state: State<'_, AppState>,
-    name: String,
-    cron_expr: String,
-    timezone: String,
-    prompt: String,
-    provider: Option<String>,
-    model: Option<String>,
-    auto_approve: bool,
-    deliver_to: Option<String>,
+    input: CronJobInput,
 ) -> Result<CronJobInfo, String> {
+    validate_cron_job_input(&input)?;
     let sm = state.service_manager.lock().await;
     let sm = sm.as_ref().ok_or("Service not initialized")?;
     let repo = opencrabs::db::repository::CronJobRepository::new(sm.context().pool());
     let now = chrono::Utc::now();
     let job = opencrabs::db::models::CronJob {
         id: Uuid::new_v4(),
-        name,
-        cron_expr,
-        timezone,
-        prompt,
-        provider,
-        model,
+        name: input.name,
+        cron_expr: input.cron_expr,
+        timezone: input.timezone,
+        prompt: input.prompt,
+        provider: input.provider,
+        model: input.model,
         thinking: "disabled".to_string(),
-        auto_approve,
-        deliver_to,
+        auto_approve: input.auto_approve,
+        deliver_to: input.deliver_to,
         deliver_api_key: None,
         enabled: true,
         last_run_at: None,
@@ -167,4 +199,60 @@ pub async fn list_cron_runs(
         .await
         .map_err(|e| e.to_string())?;
     Ok(runs.iter().map(run_to_info).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_input() -> CronJobInput {
+        CronJobInput {
+            name: "Nightly backup".to_string(),
+            cron_expr: "0 2 * * *".to_string(),
+            timezone: "UTC".to_string(),
+            prompt: "Run the nightly backup".to_string(),
+            provider: Some("anthropic".to_string()),
+            model: None,
+            auto_approve: false,
+            deliver_to: None,
+        }
+    }
+
+    #[test]
+    fn accepts_a_well_formed_cron_input() {
+        assert!(validate_cron_job_input(&sample_input()).is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_required_fields() {
+        let mut input = sample_input();
+        input.name = "  ".to_string();
+        assert!(validate_cron_job_input(&input).is_err());
+
+        let mut input = sample_input();
+        input.cron_expr = String::new();
+        assert!(validate_cron_job_input(&input).is_err());
+
+        let mut input = sample_input();
+        input.prompt = String::new();
+        assert!(validate_cron_job_input(&input).is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_fields() {
+        let mut input = sample_input();
+        input.name = "x".repeat(200);
+        assert!(validate_cron_job_input(&input).is_err());
+
+        let mut input = sample_input();
+        input.cron_expr = "0 ".repeat(200);
+        assert!(validate_cron_job_input(&input).is_err());
+    }
+
+    #[test]
+    fn rejects_control_characters_in_prompt() {
+        let mut input = sample_input();
+        input.prompt = "do\nsomething".to_string();
+        assert!(validate_cron_job_input(&input).is_err());
+    }
 }

@@ -166,6 +166,35 @@ fn validate_config_value(section: &str, key: &str, value: &str) -> Result<(), St
     }
 }
 
+/// Canonical agent approval policies. Kept in one place so the desktop UI's
+/// per-tool approval gesture and the raw config write stay in lock-step and
+/// can never disagree about which values are legal.
+pub(crate) const APPROVAL_POLICIES: &[&str] = &["manual", "on-request", "auto-always"];
+
+/// Translate a per-tool approve/deny gesture onto the canonical global policy
+/// that actually governs the agent. The desktop preview does not yet persist
+/// per-tool approval, so a gesture is mapped to the global policy honestly and
+/// the originating tool/session are logged for traceability.
+pub(crate) fn policy_for_approval(approved: bool, always_approve: bool) -> &'static str {
+    match (approved, always_approve) {
+        (true, true) => "auto-always",
+        (true, false) => "on-request",
+        (false, _) => "manual",
+    }
+}
+
+/// Persist the agent approval policy through the same validated, allowlisted
+/// path used by `update_config`, so no desktop command can bypass the guard or
+/// write a value the rest of the application would reject. Membership in the
+/// canonical set is asserted before the write so the two sources of truth can
+/// never disagree.
+pub(crate) fn apply_approval_policy(policy: &str) -> Result<(), String> {
+    if !APPROVAL_POLICIES.contains(&policy) {
+        return Err(format!("Unknown approval policy: {policy}"));
+    }
+    safe_config_write("agent", "approval_policy", policy)
+}
+
 fn safe_config_write(section: &str, key: &str, value: &str) -> Result<(), String> {
     if !SAFE_CONFIG_KEYS
         .iter()
@@ -264,5 +293,23 @@ mod tests {
             "providers.command_code_cli"
         );
         assert!(provider_section("mystery").is_err());
+    }
+
+    #[test]
+    fn approval_gestures_map_to_canonical_policies() {
+        assert_eq!(policy_for_approval(true, true), "auto-always");
+        assert_eq!(policy_for_approval(true, false), "on-request");
+        assert_eq!(policy_for_approval(false, false), "manual");
+        assert_eq!(policy_for_approval(false, true), "manual");
+        // Every mapped value must be one the config validator accepts.
+        for policy in [
+            policy_for_approval(true, true),
+            policy_for_approval(true, false),
+            policy_for_approval(false, false),
+        ] {
+            assert!(APPROVAL_POLICIES.contains(&policy));
+            validate_config_value("agent", "approval_policy", policy)
+                .unwrap_or_else(|e| panic!("mapped policy {policy} rejected by validator: {e}"));
+        }
     }
 }

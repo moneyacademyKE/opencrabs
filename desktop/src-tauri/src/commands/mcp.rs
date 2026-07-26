@@ -1,3 +1,4 @@
+use crate::commands::validation::{bounded_text, identifier};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -42,6 +43,14 @@ pub async fn add_dynamic_tool(
     executor: String,
     command: String,
 ) -> Result<(), String> {
+    // A dynamic tool is later executed as a shell command or HTTP call by the
+    // agent, so its definition is validated as strictly as any identifier the
+    // runtime would invoke. Names are bounded identifier tokens; the command
+    // body is bounded free-form text with no control characters.
+    identifier("tool name", &name, 64)?;
+    bounded_text("description", &description, 512)?;
+    bounded_text("command", &command, 4096)?;
+
     let tools_path = opencrabs::config::opencrabs_home().join("tools.toml");
     let mut config = if tools_path.exists() {
         let content = std::fs::read_to_string(&tools_path).map_err(|e| e.to_string())?;
@@ -83,6 +92,7 @@ pub async fn add_dynamic_tool(
 
 #[tauri::command]
 pub async fn remove_dynamic_tool(name: String) -> Result<(), String> {
+    identifier("tool name", &name, 64)?;
     let tools_path = opencrabs::config::opencrabs_home().join("tools.toml");
     if !tools_path.exists() {
         return Ok(());

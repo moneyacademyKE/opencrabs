@@ -1,7 +1,5 @@
-use crate::AppState;
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
-use tauri::State;
 
 const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
 const TEXT_EXTS: &[&str] = &[
@@ -53,21 +51,10 @@ pub struct FileContent {
     pub size: u64,
 }
 
-async fn session_workspace_root(state: &AppState) -> Option<PathBuf> {
-    let config = state.config.read().await.clone();
-    let provider_name = config.agent.default_provider?;
-    let candidate = std::path::PathBuf::from(provider_name);
-    if candidate.is_dir() {
-        Some(candidate)
-    } else {
-        None
-    }
-}
-
-async fn workspace_root_path(state: &AppState) -> Result<PathBuf, String> {
-    if let Some(root) = session_workspace_root(state).await {
-        return Ok(root);
-    }
+async fn workspace_root_path() -> Result<PathBuf, String> {
+    // The desktop app is launched from a project directory; that directory is
+    // the workspace root. We intentionally do NOT infer a root from config
+    // values like the provider name, which is an identifier and never a path.
     std::env::current_dir().map_err(|e| format!("Unable to resolve workspace root: {e}"))
 }
 
@@ -106,11 +93,8 @@ fn is_text_file(path: &Path) -> bool {
 }
 
 #[tauri::command]
-pub async fn list_directory(
-    state: State<'_, AppState>,
-    path: Option<String>,
-) -> Result<Vec<FileEntry>, String> {
-    let workspace_root = workspace_root_path(&state).await?;
+pub async fn list_directory(path: Option<String>) -> Result<Vec<FileEntry>, String> {
+    let workspace_root = workspace_root_path().await?;
     let requested = path
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_root.clone());
@@ -163,11 +147,8 @@ pub async fn list_directory(
 }
 
 #[tauri::command]
-pub async fn read_file_content(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<FileContent, String> {
-    let workspace_root = workspace_root_path(&state).await?;
+pub async fn read_file_content(path: String) -> Result<FileContent, String> {
+    let workspace_root = workspace_root_path().await?;
     let p = ensure_within_workspace(Path::new(&path), &workspace_root)?;
     let metadata = std::fs::metadata(&p).map_err(|e| e.to_string())?;
     if metadata.is_dir() {
@@ -195,11 +176,8 @@ pub async fn read_file_content(
     })
 }
 #[tauri::command]
-pub async fn get_workspace_root(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(workspace_root_path(&state)
-        .await?
-        .to_string_lossy()
-        .to_string())
+pub async fn get_workspace_root() -> Result<String, String> {
+    Ok(workspace_root_path().await?.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

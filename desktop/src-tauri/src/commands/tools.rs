@@ -1,6 +1,7 @@
 use crate::AppState;
+use crate::commands::config_cmd;
+use crate::commands::validation::bounded_text;
 use serde::Serialize;
-use std::path::PathBuf;
 use tauri::State;
 
 #[derive(Serialize)]
@@ -55,10 +56,8 @@ fn tool_detail_from_dynamic_def(
 
 fn list_dynamic_tool_defs()
 -> Result<Vec<opencrabs::brain::tools::dynamic::tool::DynamicToolDef>, String> {
-    let path = PathBuf::from(
-        opencrabs::brain::tools::dynamic::DynamicToolLoader::default_path()
-            .unwrap_or_else(|| opencrabs::config::opencrabs_home().join("tools.toml")),
-    );
+    let path = opencrabs::brain::tools::dynamic::DynamicToolLoader::default_path()
+        .unwrap_or_else(|| opencrabs::config::opencrabs_home().join("tools.toml"));
     opencrabs::brain::tools::dynamic::DynamicToolLoader::list_tools_detailed(&path)
         .map_err(|e| e.to_string())
 }
@@ -101,25 +100,27 @@ pub async fn get_tool_details(
 #[tauri::command]
 pub async fn approve_tool(
     state: State<'_, AppState>,
-    _session_id: String,
+    session_id: String,
     tool_name: String,
     approved: bool,
     always_approve: bool,
 ) -> Result<(), String> {
-    let policy = if approved {
-        if always_approve {
-            "auto-always"
-        } else {
-            "auto-session"
-        }
-    } else {
-        "ask"
-    };
-    opencrabs::config::Config::write_key("agent", "approval_policy", policy)
-        .map_err(|e| e.to_string())?;
+    // The gesture originates from a specific tool and session. The preview does
+    // not yet persist per-tool approval, but we still validate the identifiers
+    // so an empty or oversized payload is rejected before it touches config.
+    bounded_text("session id", &session_id, 256)?;
+    bounded_text("tool name", &tool_name, 128)?;
+
+    let policy = config_cmd::policy_for_approval(approved, always_approve);
+    config_cmd::apply_approval_policy(policy)?;
     let refreshed = opencrabs::config::Config::load().map_err(|e| e.to_string())?;
     *state.config.write().await = refreshed;
-    tracing::info!(tool_name, policy, "Desktop tool approval policy updated");
+    tracing::info!(
+        tool_name,
+        session_id,
+        policy,
+        "Desktop tool approval gesture applied to global agent policy"
+    );
     Ok(())
 }
 
