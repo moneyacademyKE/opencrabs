@@ -7,12 +7,15 @@ asset_dir = "public"
 [web.app]
 title = "OpenCrabs"
 
-# wasm-opt chokes on the DWARF debug info emitted by the toolchain (binaryen
-# SIGABRT at DWARFEmitter), which makes the release build non-deterministic
-# (dx falls back to unoptimized, unhashed output). Strip debug symbols so the
-# release build is deterministic and optimized.
 [web.wasm_opt]
+# Don't keep DWARF debug symbols in the output (and the input is stripped at the
+# cargo profile level) — binaryen's DWARF reader aborts on DWARF v5.
 debug = false
+# Preserve the wasm name section so console_error_panic_hook backtraces stay
+# human-readable without any DWARF (which crashes wasm-opt).
+keep_names = true
+# Aggressive size optimization for a shippable release.
+level = "z"
 
 [web.watcher]
 watch_path = ["src", "public", "Cargo.toml"]
