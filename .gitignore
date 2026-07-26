@@ -3,6 +3,7 @@
 /desktop/target/
 /desktop/src-tauri/target/
 /desktop/src-tauri/.verification/
+/desktop/.verification/
 
 
 # Rust

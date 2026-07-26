@@ -35,8 +35,14 @@ fn init_service_manager(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Env-gated: when OPENCRABS_DESKTOP_SMOKE is set, emit a deterministic
+    // backend-ready line on stderr so the release smoke procedure can prove the
+    // packaged binary reached IPC-readiness (config + db + state + handler).
+    // Off in normal use — nothing changes for end users.
+    let smoke_marker = std::env::var("OPENCRABS_DESKTOP_SMOKE").is_ok();
+
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(move |app| {
             let config = opencrabs::config::Config::load().map_err(|e| {
                 tracing::error!("Failed to load config: {}", e);
                 Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error>
@@ -50,6 +56,9 @@ pub fn run() {
             };
 
             app.manage(app_state);
+            if smoke_marker {
+                eprintln!("desktop_smoke: backend_ready config_loaded db_open state_managed");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
