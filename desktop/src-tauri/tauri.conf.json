@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nickknapton12/tauri-docs/refs/heads/v2/src/content/docs/_schema/config.schema.json",
   "productName": "OpenCrabs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.opencrabs.desktop",
   "build": {
     "frontendDist": "../target/dx/opencrabs-desktop-ui/release/web/public",
