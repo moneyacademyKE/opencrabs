@@ -291,10 +291,61 @@ fn subscribe_to_chat_events(
 ) {
 }
 
+fn compact_tokens(tokens: i64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
+}
+
+fn compact_path(path: Option<&str>) -> String {
+    let Some(path) = path else {
+        return "No workspace".to_string();
+    };
+    let parts: Vec<_> = path.rsplit('/').take(2).collect();
+    match parts.as_slice() {
+        [last, parent] if !last.is_empty() => format!("…/{parent}/{last}"),
+        [last] if !last.is_empty() => (*last).to_string(),
+        _ => path.to_string(),
+    }
+}
+
+fn session_activity_label(timestamp: &str) -> String {
+    timestamp
+        .split('T')
+        .next()
+        .map(|date| format!("Updated {date}"))
+        .unwrap_or_else(|| "Updated recently".to_string())
+}
+
+fn session_matches(session: &SessionInfo, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    [
+        Some(session.title.as_str()),
+        session.project_name.as_deref(),
+        session.working_directory.as_deref(),
+        session.provider_name.as_deref(),
+        session.model.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_lowercase().contains(&query))
+}
+
 #[component]
 pub fn App() -> Element {
     let mut route = use_signal(|| RouteId::Chat);
     let mut sessions = use_signal(Vec::<SessionInfo>::new);
+    let mut session_query = use_signal(String::new);
+    let mut renaming_session = use_signal(|| None::<String>);
+    let mut rename_title = use_signal(String::new);
+    let mut deleting_session = use_signal(|| None::<String>);
     let mut selected_session = use_signal(|| None::<String>);
     let mut session_messages = use_signal(Vec::<MessageInfo>::new);
     let mut composer = use_signal(String::new);
@@ -521,11 +572,25 @@ pub fn App() -> Element {
                 token_count: None,
                 cost: None,
                 created_at: "streaming".to_string(),
+                thinking: None,
             });
         }
         items
     };
 
+    let filtered_sessions: Vec<SessionInfo> = sessions
+        .read()
+        .iter()
+        .filter(|session| session_matches(session, session_query.read().as_str()))
+        .cloned()
+        .collect();
+    let delete_target_title = deleting_session.read().as_ref().and_then(|id| {
+        sessions
+            .read()
+            .iter()
+            .find(|session| &session.id == id)
+            .map(|session| session.title.clone())
+    });
     rsx! {
         div { class: "app-shell",
             header { class: "topbar",
@@ -622,55 +687,108 @@ pub fn App() -> Element {
                     }
                 }
                 div { class: "sidebar-nav",
-                    span { class: "nav-label", "Workspace" }
-                    div { class: "nav-item", "📍 {workspace_root.read()}" }
-                    span { class: "nav-label", "Status" }
-                    div { class: "nav-item", "{status.read()}" }
+                    label { class: "session-search-label", r#for: "session-search", "Find sessions" }
+                    input {
+                        id: "session-search",
+                        class: "session-search",
+                        value: "{session_query.read()}",
+                        placeholder: "Search title, project, model…",
+                        oninput: move |event| session_query.set(event.value()),
+                    }
+                    div { class: "session-count", "{filtered_sessions.len()} of {sessions.read().len()} sessions" }
                 }
-                div { class: "session-list",
-                    for session in sessions.read().iter() {
-                        button {
-                            class: if Some(&session.id) == selected_session.read().as_ref() { "session-card active" } else { "session-card" },
-                            onclick: {
-                                let session_id = session.id.clone();
-                                move |_| {
-                                    let id_for_messages = session_id.clone();
-                                    let id_for_state = session_id.clone();
-                                    selected_session.set(Some(session_id.clone()));
-                                    stream_state.set(StreamState::default());
-                                    let state = DesktopState {
-                                        route: route.read().as_str().to_string(),
-                                        selected_session_id: Some(id_for_state),
-                                    };
-                                    spawn(async move {
-                                        match invoke_unit("save_desktop_state", json!({"state": state})).await {
-                                            Ok(()) => clear_action_error(&mut action_errors, "desktop-state"),
-                                            Err(message) => set_action_error(
-                                                &mut action_errors,
-                                                "desktop-state",
-                                                format!("Failed to save selected session: {message}"),
-                                            ),
-                                        }
-                                        match invoke::<Vec<MessageInfo>, _>(
-                                            "get_session_messages",
-                                            json!({"sessionId": id_for_messages}),
-                                        )
-                                        .await
-                                        {
-                                            Ok(messages) => {
-                                                session_messages.set(messages);
-                                                clear_action_error(&mut action_errors, "sessions-load");
+                div { class: "session-list", aria_label: "Session history",
+                    if filtered_sessions.is_empty() {
+                        div { class: "session-empty", "No sessions match this search." }
+                    }
+                    for session in filtered_sessions {
+                        {
+                            let session_id = session.id.clone();
+                            let title = session.title.clone();
+                            let selected = Some(&session_id) == selected_session.read().as_ref();
+                            let project_or_path = session.project_name.clone().unwrap_or_else(|| compact_path(session.working_directory.as_deref()));
+                            let provider_model = match (&session.provider_name, &session.model) {
+                                (Some(provider), Some(model)) => format!("{provider} / {model}"),
+                                (Some(provider), None) => provider.clone(),
+                                (None, Some(model)) => model.clone(),
+                                (None, None) => "Model unavailable".to_string(),
+                            };
+                            let usage = if session.total_cost > 0.0 {
+                                format!("{} · ${:.2}", compact_tokens(session.token_count), session.total_cost)
+                            } else {
+                                compact_tokens(session.token_count)
+                            };
+                            let activity = session_activity_label(&session.updated_at);
+                            rsx! {
+                                div { class: if selected { "session-row selected" } else { "session-row" },
+                                    button {
+                                        class: "session-select",
+                                        aria_current: if selected { "page" } else { "false" },
+                                        onclick: {
+                                            let selected_id = session_id.clone();
+                                            let id_for_messages = session_id.clone();
+                                            let id_for_state = session_id.clone();
+                                            move |_| {
+                                                let id_for_messages = id_for_messages.clone();
+                                                selected_session.set(Some(selected_id.clone()));
+                                                stream_state.set(StreamState::default());
+                                                let state = DesktopState {
+                                                    route: route.read().as_str().to_string(),
+                                                    selected_session_id: Some(id_for_state.clone()),
+                                                };
+                                                spawn(async move {
+                                                    match invoke_unit("save_desktop_state", json!({"state": state})).await {
+                                                        Ok(()) => clear_action_error(&mut action_errors, "desktop-state"),
+                                                        Err(message) => set_action_error(&mut action_errors, "desktop-state", format!("Failed to save selected session: {message}")),
+                                                    }
+                                                    match invoke::<Vec<MessageInfo>, _>("get_session_messages", json!({"sessionId": id_for_messages})).await {
+                                                        Ok(messages) => {
+                                                            session_messages.set(messages);
+                                                            clear_action_error(&mut action_errors, "sessions-load");
+                                                        }
+                                                        Err(message) => set_action_error(&mut action_errors, "sessions-load", format!("Failed to load selected session: {message}")),
+                                                    }
+                                                });
                                             }
-                                            Err(message) => set_action_error(
-                                                &mut action_errors,
-                                                "sessions-load",
-                                                format!("Failed to load selected session: {message}"),
-                                            ),
+                                        },
+                                        div { class: "session-primary",
+                                            span { class: "session-title", "{title}" }
+                                            span { class: "session-activity", "{activity}" }
                                         }
-                                    });
+                                        div { class: "session-secondary",
+                                            span { class: "session-project", "{project_or_path}" }
+                                            span { class: "session-model", "{provider_model}" }
+                                        }
+                                        div { class: "session-tertiary", "{usage}" }
+                                    }
+                                    div { class: "session-actions",
+                                        button {
+                                            class: "session-action",
+                                            title: "Rename session",
+                                            aria_label: "Rename {title}",
+                                            onclick: {
+                                                let id = session_id.clone();
+                                                let current_title = title.clone();
+                                                move |_| {
+                                                    renaming_session.set(Some(id.clone()));
+                                                    rename_title.set(current_title.clone());
+                                                }
+                                            },
+                                            "✎"
+                                        }
+                                        button {
+                                            class: "session-action danger",
+                                            title: "Delete session",
+                                            aria_label: "Delete {title}",
+                                            onclick: {
+                                                let id = session_id.clone();
+                                                move |_| deleting_session.set(Some(id.clone()))
+                                            },
+                                            "×"
+                                        }
+                                    }
                                 }
-                            },
-                            div { class: "session-title", "{session.title}" }
+                            }
                         }
                     }
                 }
@@ -727,6 +845,7 @@ pub fn App() -> Element {
                                             token_count: None,
                                             cost: None,
                                             created_at: "now".to_string(),
+                                            thinking: None,
                                         });
                                     });
                                     stream_state.set(StreamState {
@@ -1140,10 +1259,167 @@ pub fn App() -> Element {
                     },
                 }
             }
+            if let Some(session_id) = renaming_session.read().clone() {
+                div { class: "modal-overlay", role: "dialog", aria_modal: "true", aria_label: "Rename session",
+                    div { class: "modal",
+                        h2 { "Rename session" }
+                        input {
+                            class: "rename-input",
+                            value: "{rename_title.read()}",
+                            autofocus: true,
+                            oninput: move |event| rename_title.set(event.value()),
+                        }
+                        div { class: "form-actions",
+                            button { class: "btn-secondary", onclick: move |_| renaming_session.set(None), "Cancel" }
+                            button {
+                                class: "btn-primary",
+                                onclick: {
+                                    let session_id = session_id.clone();
+                                    move |_| {
+                                        let session_id = session_id.clone();
+                                        let title = rename_title.read().trim().to_string();
+                                        if title.is_empty() {
+                                            set_action_error(&mut action_errors, "sessions-rename", "Session title cannot be empty.".to_string());
+                                            return;
+                                        }
+                                        spawn(async move {
+                                            match invoke_unit("rename_session", json!({"sessionId": session_id, "title": title})).await {
+                                                Ok(()) => match invoke::<Vec<SessionInfo>, _>("list_sessions", json!({})).await {
+                                                    Ok(list) => {
+                                                        sessions.set(list);
+                                                        renaming_session.set(None);
+                                                        clear_action_error(&mut action_errors, "sessions-rename");
+                                                    }
+                                                    Err(message) => set_action_error(&mut action_errors, "sessions-rename", format!("Session renamed, but refresh failed: {message}")),
+                                                },
+                                                Err(message) => set_action_error(&mut action_errors, "sessions-rename", format!("Failed to rename session: {message}")),
+                                            }
+                                        });
+                                    }
+                                },
+                                "Save"
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(session_id) = deleting_session.read().clone() {
+                div { class: "modal-overlay", role: "alertdialog", aria_modal: "true", aria_label: "Delete session",
+                    div { class: "modal",
+                        h2 { "Delete this session?" }
+                        p { class: "subtle", "This permanently removes \"{delete_target_title.clone().unwrap_or_else(|| \"this session\".to_string())}\" and its chat history." }
+                        div { class: "form-actions",
+                            button { class: "btn-secondary", onclick: move |_| deleting_session.set(None), "Cancel" }
+                            button {
+                                class: "btn-small danger",
+                                onclick: {
+                                    let session_id = session_id.clone();
+                                    move |_| {
+                                        let session_id = session_id.clone();
+                                        spawn(async move {
+                                            match invoke_unit("delete_session", json!({"sessionId": session_id.clone()})).await {
+                                                Ok(()) => {
+                                                    let next_selected = if selected_session.read().as_deref() == Some(session_id.as_str()) {
+                                                        None
+                                                    } else {
+                                                        selected_session.read().clone()
+                                                    };
+                                                    match invoke::<Vec<SessionInfo>, _>("list_sessions", json!({})).await {
+                                                        Ok(list) => {
+                                                            let resolved = next_selected.filter(|id| list.iter().any(|session| &session.id == id)).or_else(|| list.first().map(|session| session.id.clone()));
+                                                            sessions.set(list);
+                                                            selected_session.set(resolved.clone());
+                                                            deleting_session.set(None);
+                                                            clear_action_error(&mut action_errors, "sessions-delete");
+                                                            if let Some(id) = resolved {
+                                                                match invoke::<Vec<MessageInfo>, _>("get_session_messages", json!({"sessionId": id})).await {
+                                                                    Ok(messages) => session_messages.set(messages),
+                                                                    Err(message) => set_action_error(&mut action_errors, "sessions-delete", format!("Session deleted, but replacement messages failed to load: {message}")),
+                                                                }
+                                                            } else {
+                                                                session_messages.set(Vec::new());
+                                                            }
+                                                        }
+                                                        Err(message) => set_action_error(&mut action_errors, "sessions-delete", format!("Session deleted, but refresh failed: {message}")),
+                                                    }
+                                                }
+                                                Err(message) => set_action_error(&mut action_errors, "sessions-delete", format!("Failed to delete session: {message}")),
+                                            }
+                                        });
+                                    }
+                                },
+                                "Delete permanently"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
+#[component]
+fn MessageTraceItem(item: ChatDisplayItem) -> Element {
+    match item {
+        ChatDisplayItem::Text { content, reasoning } => rsx! {
+            if let Some(reasoning) = reasoning {
+                details { class: "trace-disclosure",
+                    summary { class: "trace-summary",
+                        span { class: "trace-icon", "◌" }
+                        span { "Reasoning trace" }
+                        span { class: "trace-hint", "Show details" }
+                    }
+                    pre { class: "trace-content", "{reasoning}" }
+                }
+            }
+            if !content.is_empty() {
+                div { class: "msg-text", "{content}" }
+            }
+        },
+        ChatDisplayItem::ProtocolFallback { label, content } => rsx! {
+            details { class: "tool-disclosure protocol-fallback",
+                summary { class: "tool-summary",
+                    span { class: "tool-summary-icon", "!" }
+                    span { "{label}" }
+                    span { class: "trace-hint", "Show raw data" }
+                }
+                pre { class: "tool-detail", "{content}" }
+            }
+        },
+        ChatDisplayItem::Tools(calls) => {
+            let count = calls.len();
+            let label = if count == 1 { "call" } else { "calls" };
+            rsx! {
+                details { class: "tool-disclosure",
+                    summary { class: "tool-summary",
+                        span { class: "tool-summary-icon", "⌘" }
+                        span { "{count} tool {label}" }
+                        span { class: "trace-hint", "Show activity" }
+                    }
+                    div { class: "tool-call-list",
+                        for call in calls {
+                            details { class: if call.success { "tool-call-row success" } else { "tool-call-row failed" },
+                                summary {
+                                    span { class: "tool-status", if call.success { "✓" } else { "×" } }
+                                    span { class: "tool-description", "{call.description}" }
+                                    span { class: "tool-state", if call.success { "Complete" } else { "Failed" } }
+                                }
+                                if call.input != serde_json::Value::Null {
+                                    div { class: "tool-detail-label", "Input" }
+                                    pre { class: "tool-detail", "{call.input}" }
+                                }
+                                if let Some(output) = call.output {
+                                    div { class: "tool-detail-label", "Output" }
+                                    pre { class: "tool-detail", "{output}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 #[component]
 fn ChatPanel(
     title: String,
@@ -1169,7 +1445,9 @@ fn ChatPanel(
                         class: if message.role == "user" { "message-bubble user" } else { "message-bubble assistant" },
                         div { class: "msg-avatar", if message.role == "user" { "U" } else { "A" } }
                         div {
-                            div { class: "msg-text", "{message.content}" }
+                            for item in display_message_items(&message.content, message.thinking.as_deref()) {
+                                MessageTraceItem { item }
+                            }
                             div { class: "msg-meta", "{message.role} · {message.created_at}" }
                         }
                     }
@@ -1656,6 +1934,47 @@ fn UsagePanel(data: Option<DashboardDataInfo>) -> Element {
     }
 }
 
+#[cfg(test)]
+mod session_history_tests {
+    use super::{compact_path, compact_tokens, session_matches};
+    use opencrabs_desktop_ui::models::SessionInfo;
+
+    fn session() -> SessionInfo {
+        SessionInfo {
+            id: "session-1".to_string(),
+            title: "Polish desktop history".to_string(),
+            model: Some("gpt-5.4".to_string()),
+            provider_name: Some("surplus".to_string()),
+            working_directory: Some("/Users/moe/Desktop/crabz".to_string()),
+            token_count: 12_500,
+            total_cost: 0.18,
+            created_at: "2026-07-25T12:00:00Z".to_string(),
+            updated_at: "2026-07-25T12:01:00Z".to_string(),
+            is_archived: false,
+            project_id: Some("project-1".to_string()),
+            project_name: Some("Crabz Desktop".to_string()),
+        }
+    }
+
+    #[test]
+    fn session_search_matches_structured_metadata() {
+        let session = session();
+        assert!(session_matches(&session, "crabz"));
+        assert!(session_matches(&session, "surplus"));
+        assert!(session_matches(&session, "gpt-5.4"));
+        assert!(!session_matches(&session, "unrelated"));
+    }
+
+    #[test]
+    fn compact_session_metadata_stays_readable() {
+        assert_eq!(compact_tokens(12_500), "12.5k");
+        assert_eq!(
+            compact_path(Some("/Users/moe/Desktop/crabz")),
+            "…/Desktop/crabz"
+        );
+        assert_eq!(compact_path(None), "No workspace");
+    }
+}
 #[component]
 fn SummaryCard(title: String, value: String) -> Element {
     rsx! {

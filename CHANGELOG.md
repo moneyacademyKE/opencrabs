@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ✨ Desktop
+
+- Normalize persisted reasoning and tool-call protocol markers into structured, collapsed desktop transcript disclosures.
+- Preserve reasoning-only turns and malformed marker payloads as inspectable fallback details instead of silently deleting them.
+- Add desktop architecture decisions, development playbooks, editor configuration, and Command Code CLI provider module decomposition.
+
+### 🔧 Build
+
+- Ignore reproducible desktop build outputs and runtime verification files; publish the ARM64 macOS DMG through GitHub Releases instead.
+
+
 ## [0.3.74] - 2026-07-23
 
 40 commits since v0.3.73. 70 files changed, +2948 / -212 lines.

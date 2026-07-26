@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(rm -rf /Users/moe/Desktop/crabz/desktop/src/js /Users/moe/Desktop/crabz/desktop/src/css /Users/moe/Desktop/crabz/desktop/src/index.html 2>/dev/null; ls /Users/moe/Desktop/crabz/desktop/)",
+      "Shell(rm -rf /Users/moe/Desktop/crabz/desktop/src 2>/dev/null; rustup target add wasm32-unknown-unknown 2>&1 | tail -2)",
+      "Shell(cargo:*)",
+      "Shell(python3 -c import json,sys; d=json.load(sys.stdin); [print(p['id']) for p in d['packages'] if 'dioxus' in p['name'] and 'core' in p['name']])",
+      "Shell(cd /Users/moe/Desktop/crabz/desktop/src-ui/src/components && for f in chat.rs brain_editor.rs channels_panel.rs files_panel.rs providers_panel.rs skills_panel.rs tools_panel.rs usage_panel.rs onboarding_wizard.rs; do if grep -q \"\\.read()\\.iter()\" \"$f\" 2>/dev/null; then echo \"FIXING: $f\" perl -i -pe 's/(\\w+)\\.read\\(\\)\\.iter\\(\\)/$1_clone.iter()/g' \"$f\" perl -i -pe \"s/let (\\w+_read) = (\\w+)\\.read\\(\\);/let \\$1 = \\$2.read().clone();/g\" \"$f\" fi done && echo \"Done\")",
+      "Shell(sed:*)",
+      "Shell(rm:*)",
+      "Shell(mkdir:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

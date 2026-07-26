@@ -1,6 +1,6 @@
 use opencrabs_desktop_ui::models::{
-    ChannelStatus, CronJobRunInfo, DiagnosticsSnapshot, SessionInfo, SkillInfo, UpdateInfo,
-    VoiceConfigInfo,
+    ChannelStatus, CronJobRunInfo, DiagnosticsSnapshot, MessageInfo, SessionInfo, SkillInfo,
+    UpdateInfo, VoiceConfigInfo,
 };
 use serde_json::json;
 
@@ -95,12 +95,15 @@ fn session_json_round_trip_matches_backend_shape() {
         "total_cost": 0.05,
         "created_at": "2026-07-25T12:00:00Z",
         "updated_at": "2026-07-25T12:01:00Z",
-        "is_archived": false
+        "is_archived": false,
+        "project_id": "project-1",
+        "project_name": "Crabz Desktop"
     });
 
     let parsed: SessionInfo = serde_json::from_value(value.clone()).expect("session deserialize");
     assert_eq!(parsed.id, "session-1");
     assert_eq!(parsed.provider_name.as_deref(), Some("surplus"));
+    assert_eq!(parsed.project_name.as_deref(), Some("Crabz Desktop"));
     assert_eq!(
         serde_json::to_value(parsed).expect("session serialize"),
         value
@@ -122,6 +125,30 @@ fn skill_json_round_trip_includes_enabled_state() {
     assert!(parsed.review_gate);
     assert_eq!(
         serde_json::to_value(parsed).expect("skill serialize"),
+        value
+    );
+}
+
+#[test]
+fn message_json_round_trip_preserves_persisted_thinking() {
+    let value = json!({
+        "id": "message-1",
+        "role": "assistant",
+        "content": "A concise answer",
+        "sequence": 4,
+        "token_count": 29,
+        "cost": 0.004,
+        "created_at": "2026-07-25T12:00:02Z",
+        "thinking": "Inspect the request before responding."
+    });
+
+    let parsed: MessageInfo = serde_json::from_value(value.clone()).expect("message deserialize");
+    assert_eq!(
+        parsed.thinking.as_deref(),
+        Some("Inspect the request before responding.")
+    );
+    assert_eq!(
+        serde_json::to_value(parsed).expect("message serialize"),
         value
     );
 }

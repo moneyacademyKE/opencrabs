@@ -1,0 +1,1 @@
+- Prefers full Rust GUI stack (Dioxus 0.6 WASM) over vanilla JavaScript/HTML frontends for Tauri desktop apps. Single-language codebase is the priority, even if it means dealing with immature framework compilation quirks. Confidence: 0.8

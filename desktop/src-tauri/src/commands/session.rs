@@ -1,5 +1,6 @@
 use crate::AppState;
 use serde::Serialize;
+use std::collections::HashMap;
 use tauri::State;
 use uuid::Uuid;
 
@@ -15,6 +16,10 @@ pub struct SessionInfo {
     pub created_at: String,
     pub updated_at: String,
     pub is_archived: bool,
+    /// Stable project identity when the session is assigned to a project.
+    pub project_id: Option<String>,
+    /// Resolved project label; absent for unassigned or deleted projects.
+    pub project_name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -26,41 +31,51 @@ pub struct MessageInfo {
     pub token_count: Option<i64>,
     pub cost: Option<f64>,
     pub created_at: String,
+    pub thinking: Option<String>,
 }
 
-fn session_to_info(s: &opencrabs::db::models::Session) -> SessionInfo {
+fn session_to_info(
+    session: &opencrabs::db::models::Session,
+    project_names: &HashMap<Uuid, String>,
+) -> SessionInfo {
     SessionInfo {
-        id: s.id.to_string(),
-        title: s.title.clone().unwrap_or_else(|| "Untitled".into()),
-        model: s.model.clone(),
-        provider_name: s.provider_name.clone(),
-        working_directory: s.working_directory.clone(),
-        token_count: s.token_count,
-        total_cost: s.total_cost,
-        created_at: s.created_at.to_rfc3339(),
-        updated_at: s.updated_at.to_rfc3339(),
-        is_archived: s.is_archived(),
+        id: session.id.to_string(),
+        title: session.title.clone().unwrap_or_else(|| "Untitled".into()),
+        model: session.model.clone(),
+        provider_name: session.provider_name.clone(),
+        working_directory: session.working_directory.clone(),
+        token_count: session.token_count,
+        total_cost: session.total_cost,
+        created_at: session.created_at.to_rfc3339(),
+        updated_at: session.updated_at.to_rfc3339(),
+        is_archived: session.is_archived(),
+        project_id: session.project_id.map(|id| id.to_string()),
+        project_name: session
+            .project_id
+            .and_then(|id| project_names.get(&id).cloned()),
     }
 }
 
-fn message_to_info(m: &opencrabs::db::models::Message) -> MessageInfo {
+fn message_to_info(message: &opencrabs::db::models::Message) -> MessageInfo {
     MessageInfo {
-        id: m.id.to_string(),
-        role: m.role.clone(),
-        content: m.content.clone(),
-        sequence: m.sequence,
-        token_count: m.token_count,
-        cost: m.cost,
-        created_at: m.created_at.to_rfc3339(),
+        id: message.id.to_string(),
+        role: message.role.clone(),
+        content: message.content.clone(),
+        sequence: message.sequence,
+        token_count: message.token_count,
+        cost: message.cost,
+        created_at: message.created_at.to_rfc3339(),
+        thinking: message.thinking.clone(),
     }
 }
 
-#[tauri::command]
-pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
-    let sm = state.service_manager.lock().await;
-    let sm = sm.as_ref().ok_or("Service not initialized")?;
+async fn session_metadata(
+    state: &State<'_, AppState>,
+) -> Result<(Vec<opencrabs::db::models::Session>, HashMap<Uuid, String>), String> {
+    let service_manager = state.service_manager.lock().await;
+    let service_manager = service_manager.as_ref().ok_or("Service not initialized")?;
 
-    let sessions = sm
+    let sessions = service_manager
         .sessions()
         .list_sessions(opencrabs::db::repository::SessionListOptions {
             include_archived: false,
@@ -69,9 +84,27 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo
             query: None,
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
 
-    Ok(sessions.iter().map(session_to_info).collect())
+    let project_names = service_manager
+        .projects()
+        .list_projects()
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|project| (project.id, project.name))
+        .collect();
+
+    Ok((sessions, project_names))
+}
+
+#[tauri::command]
+pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
+    let (sessions, project_names) = session_metadata(&state).await?;
+    Ok(sessions
+        .iter()
+        .map(|session| session_to_info(session, &project_names))
+        .collect())
 }
 
 #[tauri::command]
@@ -79,14 +112,14 @@ pub async fn create_session(
     state: State<'_, AppState>,
     title: String,
 ) -> Result<SessionInfo, String> {
-    let sm = state.service_manager.lock().await;
-    let sm = sm.as_ref().ok_or("Service not initialized")?;
-    let session = sm
+    let service_manager = state.service_manager.lock().await;
+    let service_manager = service_manager.as_ref().ok_or("Service not initialized")?;
+    let session = service_manager
         .sessions()
         .create_session(Some(title))
         .await
-        .map_err(|e| e.to_string())?;
-    Ok(session_to_info(&session))
+        .map_err(|error| error.to_string())?;
+    Ok(session_to_info(&session, &HashMap::new()))
 }
 
 #[tauri::command]
@@ -95,24 +128,26 @@ pub async fn rename_session(
     session_id: String,
     title: String,
 ) -> Result<(), String> {
-    let sm = state.service_manager.lock().await;
-    let sm = sm.as_ref().ok_or("Service not initialized")?;
-    let id = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
-    sm.sessions()
+    let service_manager = state.service_manager.lock().await;
+    let service_manager = service_manager.as_ref().ok_or("Service not initialized")?;
+    let id = Uuid::parse_str(&session_id).map_err(|error| error.to_string())?;
+    service_manager
+        .sessions()
         .update_session_title(id, Some(title))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let sm = state.service_manager.lock().await;
-    let sm = sm.as_ref().ok_or("Service not initialized")?;
-    let id = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
-    sm.sessions()
+    let service_manager = state.service_manager.lock().await;
+    let service_manager = service_manager.as_ref().ok_or("Service not initialized")?;
+    let id = Uuid::parse_str(&session_id).map_err(|error| error.to_string())?;
+    service_manager
+        .sessions()
         .delete_session(id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -120,13 +155,13 @@ pub async fn get_session_messages(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<Vec<MessageInfo>, String> {
-    let sm = state.service_manager.lock().await;
-    let sm = sm.as_ref().ok_or("Service not initialized")?;
-    let id = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
-    let messages = sm
+    let service_manager = state.service_manager.lock().await;
+    let service_manager = service_manager.as_ref().ok_or("Service not initialized")?;
+    let id = Uuid::parse_str(&session_id).map_err(|error| error.to_string())?;
+    let messages = service_manager
         .messages()
         .list_messages_for_session(id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
     Ok(messages.iter().map(message_to_info).collect())
 }

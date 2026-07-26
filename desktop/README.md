@@ -31,7 +31,17 @@ Browser previews deliberately report that desktop actions require `cargo tauri d
 
 The desktop DTO/command contract is documented in `desktop-command-contract.md`.
 
-## Toolchain
+
+## Chat trace and tool activity
+
+Assistant replies follow the TUI’s **progressive-disclosure** hierarchy rather than rendering provider markers as transcript text:
+
+- Final response text remains visible.
+- Reasoning is a collapsed **Reasoning trace** disclosure.
+- Tool activity is a collapsed count with named success/failure rows; each row exposes raw input and output only when opened.
+- Persisted provider thinking and CLI markers (`<!-- reasoning -->`, `<think>`, `<antThinking>`, `<mm:think>`, and `<!-- tools[-v2] -->`) are normalized before rendering.
+
+This keeps the conversation readable while retaining local debugging access. The interface uses native keyboard-accessible `details` controls; no motion is required to inspect activity.
 
 | Tool | Version expectation | Why |
 |---|---|---|

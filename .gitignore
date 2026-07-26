@@ -1,3 +1,10 @@
+# Desktop build outputs and runtime verification (reproducible; publish signed artifacts via GitHub Releases)
+/desktop/dist/
+/desktop/target/
+/desktop/src-tauri/target/
+/desktop/src-tauri/.verification/
+
+
 # Rust
 /target/
 **/*.rs.bk

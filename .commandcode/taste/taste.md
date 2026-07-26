@@ -1,0 +1,1 @@
+- Prefers full Rust GUI architecture (Dioxus WASM framework over vanilla JavaScript/HTML/CSS) for the desktop application frontend. Willing to accept porting complexity to stay in a single-language stack. Confidence: 0.8
