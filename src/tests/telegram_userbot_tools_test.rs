@@ -33,7 +33,7 @@ fn read_chat(chat: &str) -> ToolCommand {
 
 #[test]
 fn numeric_peer_selection_preserves_discovered_channel_authority() {
-    let target = PeerId::from_bot_api_dialog_id(-1003995594829).expect("valid channel id");
+    let target = PeerId::from_bot_api_dialog_id(-1001234567890).expect("valid channel id");
     let other = PeerRef {
         id: PeerId::user_unchecked(42),
         auth: PeerAuth::from_hash(7),
