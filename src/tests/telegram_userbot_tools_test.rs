@@ -17,7 +17,9 @@ use crate::channels::telegram::userbot::tools::commands::{
 };
 use crate::channels::telegram::userbot::tools::dispatch::{Denial, authorize};
 use crate::channels::telegram::userbot::tools::params::ToolInvocation;
+use crate::channels::telegram::userbot::tools::transport::select_peer_ref;
 use crate::config::types::{ChatPermission, TelegramUserbotConfig};
+use grammers_session::types::{PeerAuth, PeerId, PeerRef};
 
 fn read_chat(chat: &str) -> ToolCommand {
     ToolCommand::ReadChat(ReadChat {
@@ -27,6 +29,30 @@ fn read_chat(chat: &str) -> ToolCommand {
         thread_id: Some(4230),
         limit: 50,
     })
+}
+
+#[test]
+fn numeric_peer_selection_preserves_discovered_channel_authority() {
+    let target = PeerId::from_bot_api_dialog_id(-1001234567890).expect("valid channel id");
+    let other = PeerRef {
+        id: PeerId::user_unchecked(42),
+        auth: PeerAuth::from_hash(7),
+    };
+    let authorized = PeerRef {
+        id: target,
+        auth: PeerAuth::from_hash(99),
+    };
+
+    assert_eq!(
+        select_peer_ref(target, [other, authorized]),
+        authorized,
+        "numeric resolution must retain the dialog access hash"
+    );
+    assert_eq!(
+        select_peer_ref(target, [other]),
+        target.to_ambient_ref(),
+        "non-dialog numeric peers retain the legacy ambient fallback"
+    );
 }
 
 #[test]
