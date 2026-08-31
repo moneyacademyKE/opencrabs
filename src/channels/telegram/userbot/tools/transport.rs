@@ -41,11 +41,34 @@ macro_rules! drain {
     }};
 }
 
+/// Pick the matching authenticated dialog reference, preserving its access hash.
+/// Ambient authority remains the compatibility fallback for peers absent from dialogs.
+pub(crate) fn select_peer_ref(
+    target: PeerId,
+    candidates: impl IntoIterator<Item = PeerRef>,
+) -> PeerRef {
+    candidates
+        .into_iter()
+        .find(|peer| peer.id == target)
+        .unwrap_or_else(|| target.to_ambient_ref())
+}
+
+async fn resolve_numeric_chat_ref(client: &Client, target: PeerId) -> Result<PeerRef> {
+    let mut dialogs = client.iter_dialogs();
+    while let Some(dialog) = dialogs.next().await? {
+        if dialog.peer_id() == target {
+            return Ok(select_peer_ref(target, [dialog.peer_ref()]));
+        }
+    }
+    Ok(select_peer_ref(target, std::iter::empty()))
+}
+
 /// Resolve a user-supplied chat reference to a `PeerRef`.
 ///
 /// - `"me"` → the logged-in user (ambient authority, no network)
 /// - `"@name"` / `"name"` → username resolution via the session
-/// - numeric (Bot API dialog id) → `PeerId` + ambient authority
+/// - numeric (Bot API dialog id) → authenticated dialog ref when known,
+///   ambient authority only as a compatibility fallback
 pub(crate) async fn resolve_chat_ref(client: &Client, chat: &str) -> Result<PeerRef> {
     let chat = chat.trim();
     if chat.eq_ignore_ascii_case("me") {
@@ -56,9 +79,9 @@ pub(crate) async fn resolve_chat_ref(client: &Client, chat: &str) -> Result<Peer
     }
     if chat.parse::<i64>().is_ok() {
         let id = parse_bot_api_chat_id(chat)?;
-        return PeerId::from_bot_api_dialog_id(id)
-            .map(|pid| pid.to_ambient_ref())
-            .with_context(|| format!("chat id {chat:?} is not a valid dialog id"));
+        let target = PeerId::from_bot_api_dialog_id(id)
+            .with_context(|| format!("chat id {chat:?} is not a valid dialog id"))?;
+        return resolve_numeric_chat_ref(client, target).await;
     }
     resolve_username(client, chat).await
 }
