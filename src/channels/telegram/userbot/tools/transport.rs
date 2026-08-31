@@ -53,14 +53,16 @@ pub(crate) fn select_peer_ref(
         .unwrap_or_else(|| target.to_ambient_ref())
 }
 
-async fn resolve_numeric_chat_ref(client: &Client, target: PeerId) -> Result<PeerRef> {
+async fn resolve_numeric_chat_ref(client: &Client, target: PeerId) -> PeerRef {
     let mut dialogs = client.iter_dialogs();
-    while let Some(dialog) = dialogs.next().await? {
+    // Dialog discovery only enriches the legacy ambient reference with authority.
+    // If discovery itself fails, preserve the previous numeric-ID behavior.
+    while let Ok(Some(dialog)) = dialogs.next().await {
         if dialog.peer_id() == target {
-            return Ok(select_peer_ref(target, [dialog.peer_ref()]));
+            return select_peer_ref(target, [dialog.peer_ref()]);
         }
     }
-    Ok(select_peer_ref(target, std::iter::empty()))
+    select_peer_ref(target, std::iter::empty())
 }
 
 /// Resolve a user-supplied chat reference to a `PeerRef`.
@@ -81,7 +83,7 @@ pub(crate) async fn resolve_chat_ref(client: &Client, chat: &str) -> Result<Peer
         let id = parse_bot_api_chat_id(chat)?;
         let target = PeerId::from_bot_api_dialog_id(id)
             .with_context(|| format!("chat id {chat:?} is not a valid dialog id"))?;
-        return resolve_numeric_chat_ref(client, target).await;
+        return Ok(resolve_numeric_chat_ref(client, target).await);
     }
     resolve_username(client, chat).await
 }
