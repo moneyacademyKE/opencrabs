@@ -1,0 +1,84 @@
+# OpenCrabs executable tool gates — copy to ~/.opencrabs/gates.toml to enable.
+#
+# First matching gate decides BEFORE the approval layer:
+#   decision = "deny"   -> refuse the call, reason surfaced to model and user
+#   decision = "allow"  -> pre-clear the approval prompt for this exact shape
+#   decision = "prompt" -> force the interactive prompt even under auto-approve
+# No match -> your existing approval policy applies, unchanged.
+#
+# Fail-closed: a malformed file, bad regex, or unknown decision denies every
+# tool call until fixed. A missing gates.toml means gates are off.
+#
+# `args-regex` matches the newline-joined string values of the tool input —
+# a bash `command` value appears verbatim. Order matters: put narrow denies
+# above broad allows. This file is user data — edit freely; the binary only
+# owns the evaluator.
+
+# --- Constitution: forbidden outright (AGENTS.md hard rules) ---------------
+
+[[gate]]
+name = "deny-python"
+tool = "bash"
+args-regex = "(^|[\\s;&|/])(python3?|pip3?)\\b"
+decision = "deny"
+reason = "Python is prohibited; use Babashka (bb) for scripting"
+
+[[gate]]
+name = "deny-rm"
+tool = "bash"
+args-regex = "(^|[\\s;&|/(])rm\\b"
+decision = "deny"
+reason = "Use trash instead of rm; deletion requires explicit approval"
+
+[[gate]]
+name = "deny-git-revert"
+tool = "bash"
+args-regex = "git revert\\b"
+decision = "deny"
+reason = "git revert pollutes history; use git reset --hard HEAD~1 (with approval)"
+
+[[gate]]
+name = "deny-git-reset-hard"
+tool = "bash"
+args-regex = "git reset\\s+--hard\\b"
+decision = "deny"
+reason = "git reset --hard is destructive; requires explicit approval flow"
+
+[[gate]]
+name = "deny-git-checkout-overwrite"
+tool = "bash"
+args-regex = "git checkout\\s+\\S+\\s+--\\s+\\."
+decision = "deny"
+reason = "git checkout <sha> -- . destroys uncommitted work"
+
+[[gate]]
+name = "deny-git-force-push"
+tool = "bash"
+args-regex = "git push\\b[^|;&]*(--force|--force-with-lease|\\s-f\\b)"
+decision = "deny"
+reason = "Force-pushes require explicit owner approval"
+
+[[gate]]
+name = "deny-git-push-main"
+tool = "bash"
+args-regex = "git push(\\s+\\S+)?\\s+(main|master)\\b"
+decision = "deny"
+reason = "Never push to main; create PRs"
+
+# --- Irreversibles always prompt -------------------------------------------
+
+[[gate]]
+name = "prompt-git-push"
+tool = "bash"
+args-regex = "git push\\b"
+decision = "prompt"
+reason = "Pushes are irreversible; confirm before publishing"
+
+# --- Pre-cleared scripting --------------------------------------------------
+
+[[gate]]
+name = "allow-bb-scripting"
+tool = "bash"
+args-regex = "^bb\\b"
+decision = "allow"
+reason = "Babashka scripting is the sanctioned automation runtime"
