@@ -67,7 +67,17 @@ impl super::AgentService {
                     let needs_approval = tool.requires_approval_for_input(input)
                         && (!self.auto_approve_tools || has_override_approval)
                         && !tool_context.auto_approve;
-                    !needs_approval
+                    if needs_approval {
+                        return false;
+                    }
+                    // A deny/prompt gate keeps the whole batch on the
+                    // sequential path: denies must refuse there, prompts
+                    // need interactive approval that can't parallelize.
+                    !matches!(
+                        crate::utils::gates::evaluate(name, input),
+                        crate::utils::GateDecision::Deny { .. }
+                            | crate::utils::GateDecision::Prompt
+                    )
                 }
                 // Unknown tool: the sequential path has dedicated handling.
                 None => false,

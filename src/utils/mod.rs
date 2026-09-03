@@ -9,6 +9,7 @@ pub mod drop_landing;
 pub mod drop_transfer;
 pub mod fd_suppress;
 pub mod file_extract;
+pub mod gates;
 pub mod git_branch;
 pub mod image;
 pub mod install;
@@ -33,6 +34,7 @@ pub use approval::{
     check_approval_policy, persist_auto_always_policy, persist_auto_session_policy,
 };
 pub use file_extract::{FileContent, classify_file, inject_file_content, process_file_with_vision};
+pub use gates::GateDecision;
 pub use image::{
     extract_img_markers, extract_react_marker, extract_react_marker_lenient, extract_vid_markers,
 };
