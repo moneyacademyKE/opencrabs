@@ -6001,12 +6001,39 @@ impl AgentService {
                 // Each channel's make_approval_callback() already checks
                 // check_approval_policy() from config — the tool loop only
                 // respects the auto_approve_tools flag and tool-level policy.
-                let needs_approval = if let Some(tool) = self.tool_registry.get(&tool_name) {
+                let mut needs_approval = if let Some(tool) = self.tool_registry.get(&tool_name) {
                     tool.requires_approval_for_input(&tool_input)
                         && (!self.auto_approve_tools || has_override_approval)
                         && !tool_context.auto_approve
                 } else {
                     false
+                };
+
+                // Executable gates (gates.toml): first match decides before
+                // approval. Deny refuses outright; allow pre-clears the
+                // prompt; prompt forces it. No match leaves the decision
+                // above untouched.
+                match crate::utils::gates::evaluate(&tool_name, &tool_input) {
+                    crate::utils::GateDecision::Deny { gate, reason } => {
+                        tracing::warn!("Gate '{gate}' denied tool '{tool_name}': {reason}");
+                        self.record_tool_feedback(
+                            session_id,
+                            &tool_name,
+                            Some(&tool_input_for_progress),
+                            false,
+                            Some("gate_denied"),
+                        );
+                        tool_outputs.push((false, format!("Blocked by gate '{gate}': {reason}")));
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id: tool_id,
+                            content: format!("Blocked by gate '{gate}': {reason}"),
+                            is_error: Some(true),
+                        });
+                        continue;
+                    }
+                    crate::utils::GateDecision::Allow => needs_approval = false,
+                    crate::utils::GateDecision::Prompt => needs_approval = true,
+                    crate::utils::GateDecision::NoMatch => {}
                 };
 
                 // Request approval if needed
