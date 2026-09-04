@@ -115,7 +115,13 @@ jobs:
       # the GitHub Release (binaries) is never dropped while crates.io lags
       # behind. An already-published version skips this step (job still succeeds).
       - name: Publish
-        if: steps.check.outputs.published == 'false'
+        # Fork-mode: secrets don't copy to forks and the crate name is owned by
+        # upstream, so publishing can never succeed there (observed live on
+        # v0.3.84: empty token + opencrabs@0.3.81 already on index). Skip when
+        # no token is configured so the job succeeds and the GitHub Release
+        # still ships. With a token present (upstream), a failed publish still
+        # fails this job — the all-or-nothing guarantee holds.
+        if: steps.check.outputs.published == 'false' && env.CARGO_REGISTRY_TOKEN != ''
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: RUSTFLAGS='--cfg crates_publish' cargo publish --allow-dirty
@@ -315,6 +321,8 @@ jobs:
     # build AND the crates.io publish. Previously this was `always()`, so a
     # failed publish still shipped binaries: users auto-updated past the version
     # crates.io actually had, then had to update manually. All-or-nothing now.
+    # (Fork note: with no token the publish step skips, the publish JOB
+    # succeeds, so this condition still passes and binaries ship.)
     if: needs.build-release.result == 'success' && needs.publish-crate.result == 'success'
     runs-on: ubuntu-latest
     permissions:
