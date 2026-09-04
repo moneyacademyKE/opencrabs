@@ -3642,7 +3642,7 @@ pub(crate) async fn handle_message(
                             if !s.dirty && !s.recreate && !any_tools_dirty && !has_display && !has_active_tools && !processing { continue; }
 
                             // Drain the ordered display queue
-                            let display_items: Vec<DisplayItem> = s.display_queue.drain(..).collect();
+                            let display_items: Vec<DisplayItem> = std::mem::take(&mut s.display_queue);
 
                             // Collect dirty tools that already have messages (for editing)
                             let tool_edits: Vec<_> = s.tool_msgs.iter().enumerate()
@@ -4186,7 +4186,7 @@ pub(crate) async fn handle_message(
     // Grab streaming message id and drain queued display items
     let (streaming_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
+        let display: Vec<DisplayItem> = std::mem::take(&mut s.display_queue);
         (s.msg_id, display)
     };
 

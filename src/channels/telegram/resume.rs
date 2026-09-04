@@ -199,7 +199,7 @@ pub(crate) async fn resume_session(
                             {
                                 continue;
                             }
-                            let items: Vec<DisplayItem> = s.display_queue.drain(..).collect();
+                            let items: Vec<DisplayItem> = std::mem::take(&mut s.display_queue);
                             for t in s.tool_msgs.iter_mut().filter(|t| t.dirty) {
                                 t.dirty = false;
                             }
@@ -598,7 +598,7 @@ pub(crate) async fn resume_session(
     // ── Final delivery ─────────────────────────────────────────────────────
     let (streaming_msg_id, remaining_display) = {
         let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
-        let display: Vec<DisplayItem> = s.display_queue.drain(..).collect();
+        let display: Vec<DisplayItem> = std::mem::take(&mut s.display_queue);
         (s.msg_id, display)
     };
 
