@@ -46,7 +46,7 @@ jobs:
   # cross-platform build/test matrix for a PR that won't lint anyway.
   lint:
     name: Lint
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -204,7 +204,7 @@ jobs:
   test:
     name: Test
     needs: [lint, audit]
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -268,7 +268,7 @@ jobs:
 
   audit:
     name: Cargo Audit
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -350,7 +350,7 @@ jobs:
     # On the Mac, where tarpaulin finishes the whole suite in ~15 min. A
     # hosted runner needed well over 30 for the same work and cost minutes
     # for it, which is not a trade worth making for a metric job.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -422,7 +422,7 @@ jobs:
     name: CI Required Gate
     if: always()
     needs: [lint, build, test, audit]
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'ubuntu-latest' }}
     steps:
       - name: Check results
         run: |
