@@ -136,34 +136,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: opencrabs
-            asset_suffix: linux-amd64
-
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            artifact_name: opencrabs
-            asset_suffix: linux-arm64
-
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: opencrabs.exe
-            asset_suffix: windows-amd64
-
-          # Both darwin targets build on our own Mac. GitHub bills macOS
-          # minutes at 10x, Linux at 1x and Windows at 2x, so these two jobs
-          # cost more than the other three combined; the Mac runs them for
-          # free and natively. Linux and Windows stay hosted, where they are
-          # cheap and native. This does mean a tag cannot finish its release
-          # while the Mac runner is offline: the darwin jobs queue until it
-          # comes back rather than failing over to a hosted runner.
-          - os: self-hosted
+          # Fork intent (see .github/FORK_INTENTS.md): Linux and Windows
+          # releases are a non-goal — macOS-only. Both darwin targets build
+          # on GitHub-hosted runners; upstream gates these on their own
+          # self-hosted Mac, which the fork does not have.
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: opencrabs
             asset_suffix: macos-amd64
 
-          - os: self-hosted
+          - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: opencrabs
             asset_suffix: macos-arm64

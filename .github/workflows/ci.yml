@@ -135,7 +135,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: self-hosted
+          # Fork intent: hosted runner (no self-hosted infra — upstream
+          # gates PR builds on their own Mac). PR/dispatch-only;
+          # release.yml re-validates both darwin targets at tag time.
+          - os: macos-latest
             target: aarch64-apple-darwin
             features: --all-features
     steps:
