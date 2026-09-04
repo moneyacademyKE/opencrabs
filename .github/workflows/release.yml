@@ -349,6 +349,9 @@ jobs:
       - name: Generate checksums
         run: |
           cd release-assets
+          # nullglob: empty globs expand to nothing instead of erroring
+          # (mac-only releases ship no *.zip; windows ships no *.tar.gz)
+          shopt -s nullglob
           sha256sum *.tar.gz *.zip > SHA256SUMS
           cat SHA256SUMS
 
