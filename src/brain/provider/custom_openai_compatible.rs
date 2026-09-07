@@ -2520,8 +2520,18 @@ impl OpenAIProvider {
         self.vision_model.as_deref()
     }
 
-    /// Build request headers
+    /// Build request headers for a call made outside any conversation (the
+    /// model-catalogue fetch). Chat paths use [`Self::headers_for`] so the
+    /// gateway sees the session the request belongs to.
     fn headers(&self) -> std::result::Result<reqwest::header::HeaderMap, ProviderError> {
+        self.headers_for(None)
+    }
+
+    /// Build request headers for a request belonging to `session`.
+    fn headers_for(
+        &self,
+        session: Option<uuid::Uuid>,
+    ) -> std::result::Result<reqwest::header::HeaderMap, ProviderError> {
         let mut headers = reqwest::header::HeaderMap::new();
 
         // Resolve the bearer token: dynamic token_fn takes priority over static api_key
@@ -2605,6 +2615,25 @@ impl OpenAIProvider {
                 value.parse::<reqwest::header::HeaderValue>(),
             ) {
                 headers.insert(k, v);
+            }
+        }
+
+        // Client identification, resolved per gateway; a no-op for any host
+        // without an identity contract.
+        for (key, value) in super::identity::headers_for(&self.base_url, session) {
+            match (
+                key.parse::<reqwest::header::HeaderName>(),
+                value.parse::<reqwest::header::HeaderValue>(),
+            ) {
+                (Ok(k), Ok(v)) => {
+                    headers.insert(k, v);
+                }
+                _ => tracing::warn!(
+                    "Identity: dropping malformed header '{}' for {} — the gateway may \
+                     reject this request as an unidentified client",
+                    key,
+                    self.base_url
+                ),
             }
         }
 
@@ -2951,6 +2980,35 @@ impl OpenAIProvider {
             reasoning_effort = knobs.effort.map(str::to_string);
         }
 
+        // z.ai GLM-5.x: Preserved Thinking, so a tool loop stops re-deriving
+        // the whole chain on every step (#1348). Omitted for every other
+        // host and for GLM-4.x, which keep their current behaviour.
+        if let Some(glm) = super::glm_reasoning::thinking_for(
+            &self.base_url,
+            &request.model,
+            self.enable_thinking_setting,
+        ) {
+            if glm.off_ignored {
+                tracing::warn!(
+                    "enable_thinking = false is ignored by {}: GLM-5.3 and later cannot turn thinking off",
+                    request.model
+                );
+            }
+            thinking = Some(glm.to_json());
+        }
+        // GLM-5.3+ reads a three-rung ladder and turns anything else into
+        // `max` without saying so (#1349). Map, and say so.
+        if let Some(mapped) = super::glm_reasoning::effort_for(
+            &self.base_url,
+            &request.model,
+            reasoning_effort.as_deref(),
+        ) {
+            if let Some(note) = mapped.note.as_deref() {
+                tracing::warn!("{note}");
+            }
+            reasoning_effort = Some(mapped.effort.to_string());
+        }
+
         // Carry reasoning across turns instead of re-deriving it each turn
         // (#1033). Sent on every DashScope request, ungated by family.
         let preserve_thinking =
@@ -2968,6 +3026,11 @@ impl OpenAIProvider {
             || request.model.to_lowercase().contains("mimo");
         let reasoning_split = if is_minimax { Some(true) } else { None };
 
+        // z.ai buffers tool-call arguments unless asked to stream them, and a
+        // buffered 40 KB write is minutes of SSE silence that the idle timer
+        // reads as a dead connection (#1347).
+        let tool_stream = super::glm_reasoning::tool_stream_for(&self.base_url, request.stream);
+
         OpenAIRequest {
             model: request.model,
             messages,
@@ -2984,6 +3047,7 @@ impl OpenAIProvider {
             reasoning_split,
             preserve_thinking,
             enable_thinking,
+            tool_stream,
         }
     }
 
@@ -3104,26 +3168,40 @@ impl OpenAIProvider {
             }
         }
 
-        // Detect models that dump tool JSON as text instead of structured calls
-        let has_tool_text = content_blocks.iter().any(|b| {
-            if let ContentBlock::Text { text } = b {
-                (text.contains("\"function\"") && text.contains("\"arguments\""))
-                    || (text.contains("tool_call") && text.contains("\"name\""))
-                    || (text.contains("```json") && text.contains("\"command\""))
-            } else {
-                false
-            }
-        });
+        // Detect models that dump tool JSON as text instead of structured
+        // calls. Tightened detector (fork #66, ex-upstream
+        // adolfousier/opencrabs#1260): only a parseable call-shaped JSON
+        // object outside code fences counts — prose about tools no longer
+        // false-positives. On detection the raw JSON is STRIPPED from the
+        // content and `tool_text_leak` is set on the response for the tool
+        // loop's corrective retry. No ⚠️ warning block is appended: parser
+        // artifacts must never ride as content (they used to be persisted
+        // verbatim into compaction summaries / memory files).
         let has_structured_tools = content_blocks
             .iter()
             .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
-        if has_tool_text && !has_structured_tools {
-            tracing::warn!(
-                "Model returned tool call JSON as text — likely does not support function calling"
-            );
-            content_blocks.push(ContentBlock::Text {
-                text: "\n\n⚠️ **This model does not support function calling.** Tool requests were returned as text instead of executable calls. Consider switching to a model that supports tool use (e.g. Claude, GPT-4, Gemini).".to_string(),
-            });
+        let mut tool_text_leak = false;
+        if !has_structured_tools {
+            for block in content_blocks.iter_mut() {
+                if let ContentBlock::Text { text } = block {
+                    let (cleaned, stripped) = super::json_repair::strip_call_shaped_json(text);
+                    if stripped {
+                        tracing::warn!(
+                            "Model returned tool call JSON as text — unrecoverable, \
+                             stripped from content (likely weak function-calling support)"
+                        );
+                        *text = cleaned;
+                        tool_text_leak = true;
+                    }
+                }
+            }
+            if tool_text_leak {
+                // Drop text blocks emptied by the strip.
+                content_blocks.retain(|b| match b {
+                    ContentBlock::Text { text } => !text.trim().is_empty(),
+                    _ => true,
+                });
+            }
         }
 
         // Map finish_reason to StopReason
@@ -3150,6 +3228,7 @@ impl OpenAIProvider {
             },
             // Non-streaming parse path — streaming responses go through helpers.rs.
             streaming_active_secs: None,
+            tool_text_leak,
         }
     }
 
@@ -3304,6 +3383,9 @@ impl Provider for OpenAIProvider {
         let model = request.model.clone();
         let message_count = request.messages.len();
         let retry_config = self.retry_config(&model);
+        // Captured before `to_openai_request` consumes the request: the
+        // OpenCode session header is keyed on it.
+        let session = request.session_id;
 
         let mut openai_request = self.to_openai_request(request);
 
@@ -3342,7 +3424,7 @@ impl Provider for OpenAIProvider {
                 let response = self
                     .client
                     .post(self.send_url())
-                    .headers(self.headers()?)
+                    .headers(self.headers_for(session)?)
                     .json(&body)
                     .send()
                     .await?;
@@ -3411,7 +3493,7 @@ impl Provider for OpenAIProvider {
                         let response = self
                             .client
                             .post(self.send_url())
-                            .headers(self.headers()?)
+                            .headers(self.headers_for(session)?)
                             .json(&body)
                             .send()
                             .await?;
@@ -3445,7 +3527,7 @@ impl Provider for OpenAIProvider {
                                 let response = self
                                     .client
                                     .post(self.send_url())
-                                    .headers(self.headers()?)
+                                    .headers(self.headers_for(session)?)
                                     .json(&body)
                                     .send()
                                     .await?;
@@ -3488,6 +3570,9 @@ impl Provider for OpenAIProvider {
 
         let model = request.model.clone();
         let message_count = request.messages.len();
+        // Captured before `to_openai_request` consumes the request: the
+        // OpenCode session header is keyed on it.
+        let session = request.session_id;
 
         // Proactive pacing: stay under provider rate limits
         if let Some(ref limiter) = self.rate_limiter {
@@ -3573,7 +3658,7 @@ impl Provider for OpenAIProvider {
                 let response = self
                     .client
                     .post(self.send_url())
-                    .headers(self.headers()?)
+                    .headers(self.headers_for(session)?)
                     .json(&body)
                     .send()
                     .await?;
@@ -3617,7 +3702,7 @@ impl Provider for OpenAIProvider {
                     let r = self
                         .client
                         .post(self.send_url())
-                        .headers(self.headers()?)
+                        .headers(self.headers_for(session)?)
                         .json(&body)
                         .send()
                         .await?;
@@ -3648,7 +3733,7 @@ impl Provider for OpenAIProvider {
                             let r = self
                                 .client
                                 .post(self.send_url())
-                                .headers(self.headers()?)
+                                .headers(self.headers_for(session)?)
                                 .json(&body)
                                 .send()
                                 .await?;
@@ -4964,6 +5049,10 @@ pub(crate) struct OpenAIRequest {
     /// (#1034); see `qwen_reasoning`.
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_thinking: Option<bool>,
+    /// z.ai: stream tool-call arguments as deltas instead of one batch at the
+    /// end of generation (#1347); see `glm_reasoning`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_stream: Option<bool>,
 }
 
 impl OpenAIRequest {

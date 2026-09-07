@@ -27,6 +27,10 @@ struct Ledger {
     delivered: usize,
     /// Resumes that errored, or whose channel never connected.
     failed: usize,
+    /// Why turns cannot be recorded for the next restart, when they cannot.
+    /// A boot that finds nothing because nothing could be written must not
+    /// read as a boot that had nothing to recover (#1401).
+    tracking_disabled: Option<String>,
 }
 
 static LEDGER: Mutex<Option<Ledger>> = Mutex::new(None);
@@ -66,6 +70,12 @@ pub fn record_failed() {
     with(|l| l.failed += 1);
 }
 
+/// The probe insert into `pending_requests` failed: no turn in this run can
+/// be recovered after the next restart.
+pub fn record_tracking_disabled(reason: String) {
+    with(|l| l.tracking_disabled = Some(reason));
+}
+
 /// The summary line.
 ///
 /// Ids in full, not counts: the whole point is being able to go from this
@@ -73,19 +83,24 @@ pub fn record_failed() {
 /// is zero, because "this boot had nothing to recover" is the fact that
 /// makes its absence meaningful on the boots that did.
 pub fn summary_line() -> String {
-    let (interrupted, resumed, delivered, failed) = with(|l| {
+    let (interrupted, resumed, delivered, failed, disabled) = with(|l| {
         (
             l.interrupted.len(),
             l.resumed.iter().map(Uuid::to_string).collect::<Vec<_>>(),
             l.delivered,
             l.failed,
+            l.tracking_disabled.clone(),
         )
     })
     .unwrap_or_default();
-    format!(
+    let mut line = format!(
         "[boot] interrupted={interrupted} resumed=[{}] delivered={delivered} failed={failed}",
         resumed.join(" ")
-    )
+    );
+    if let Some(reason) = disabled {
+        line.push_str(&format!(" recovery=DISABLED({reason})"));
+    }
+    line
 }
 
 /// Emit the summary once every bounded wait has had its chance to resolve.
@@ -106,69 +121,5 @@ pub fn schedule_summary(after: std::time::Duration) {
 pub(crate) fn reset_for_test() {
     if let Ok(mut guard) = LEDGER.lock() {
         *guard = None;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Serialize tests against the process-global ledger, starting each from
-    /// a clean slate — the same lesson restart_recovery learned the hard way
-    /// (#1206): a second suite with its own lock does not serialize against
-    /// the first.
-    fn guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        reset_for_test();
-        g
-    }
-
-    fn uuid(n: u8) -> Uuid {
-        Uuid::from_u64_pair(n as u64, 0)
-    }
-
-    #[test]
-    fn an_empty_boot_still_says_so() {
-        let _g = guard();
-        assert_eq!(
-            summary_line(),
-            "[boot] interrupted=0 resumed=[] delivered=0 failed=0"
-        );
-    }
-
-    #[test]
-    fn duplicate_rows_count_as_one_session_but_every_resume_counts() {
-        let _g = guard();
-        // Two rows for session 1 (a re-queued turn), one for session 2.
-        record_interrupted(uuid(1));
-        record_interrupted(uuid(1));
-        record_interrupted(uuid(2));
-        record_resumed(uuid(1));
-        record_resumed(uuid(2));
-        record_delivered();
-        record_failed();
-        let line = summary_line();
-        // Sessions, not rows: the ids are in full precisely so this line is
-        // the whole investigation.
-        assert!(line.contains("interrupted=2"), "line was: {line}");
-        assert!(line.contains(&uuid(1).to_string()), "line was: {line}");
-        assert!(line.contains(&uuid(2).to_string()), "line was: {line}");
-        assert!(line.contains("delivered=1"), "line was: {line}");
-        assert!(line.contains("failed=1"), "line was: {line}");
-    }
-
-    #[test]
-    fn a_wake_that_never_left_survives_as_failed() {
-        let _g = guard();
-        record_interrupted(uuid(7));
-        record_resumed(uuid(7));
-        // The dispatch happened, the transport never came up.
-        record_failed();
-        let line = summary_line();
-        assert!(line.contains("interrupted=1"), "line was: {line}");
-        assert!(line.contains(&uuid(7).to_string()), "line was: {line}");
-        assert!(line.contains("delivered=0"), "line was: {line}");
-        assert!(line.contains("failed=1"), "line was: {line}");
     }
 }

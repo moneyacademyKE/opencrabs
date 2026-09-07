@@ -75,6 +75,19 @@ Fixes #376 (byte/char boundary), #377 (rich API retry), #378 (HTML tag stripping
 
 This lets you batch related fixes in one PR while keeping the issue tracker clean and atomic.
 
+### Issue Titles
+
+Issue titles use the same [Conventional Commits](https://www.conventionalcommits.org/) shape as commit messages: `<type>(<scope>): <what is wrong or wanted>`. The type is one of `fix`, `feat`, `docs`, `refactor`, `test`, `chore`, `ci`; the scope is the module or surface (`tui`, `provider`, `rsi`, `telegram`, `memory`).
+
+```
+fix(tui): copy-to-clipboard notice shifts the chat history three rows
+feat(provider): send tool_stream to z.ai so tool-call arguments stream
+docs: README test counts are stale
+refactor(memory): mod.rs is declarations-only
+```
+
+A bare area prefix (`TUI:`, `z.ai:`, `Reasoning stream:`) is not the convention. The type makes the tracker filterable and lets the fixing commit reuse the title verbatim. Add labels on creation (`--label bug --label tui`), one for the type and one for the area.
+
 ## Step-by-Step: Submitting a Bug Fix
 
 1. **Find or create the issue** — Check existing issues first. If none exists, create one.
@@ -121,7 +134,7 @@ cargo clippy --lib --bins --tests --all-features -- -D warnings
 cargo test --all-features --verbose
 ```
 
-**All three commands must pass.** PRs that fail CI will not be reviewed.
+**All three commands must pass.** PRs with failing CI will not be merged. We'll comment on the PR explaining what's failing and how to fix it. Push the fix, wait for CI to go green, and the PR will be reviewed.
 
 `cargo clippy` is the lint pass we trust — `cargo check` only type-checks and misses the lint rules CI enforces. Iterate with clippy locally so you don't burn a CI run discovering a `-D warnings` failure.
 
@@ -178,9 +191,26 @@ cargo test --all-features my_feature_test
 
 If you find an existing inline `#[cfg(test)] mod tests` while working on a file, move it into `src/tests/` as part of your change. Leaving the violation in place will fail review.
 
+### Tests Never Touch the Live Config or Keys
+
+**No test may write `~/.opencrabs/config.toml`, `keys.toml`, or anything else in the live default home.** Any test that reaches a config or keys writer (the onboarding wizard's save, `Config::write_key`, `Config::write_array`, `save_keys`, a migration) must run under a home override so the write lands in a throwaway directory:
+
+```rust
+let dir = tempfile::tempdir().unwrap();
+let home = dir.path().join(".opencrabs");
+std::fs::create_dir_all(&home).unwrap();
+crate::config::profile::with_home_override(home, || {
+    // drive the wizard / call the writer here
+});
+```
+
+A test binary logs nowhere, so a leaking test silently rewrites the developer's real settings with fixture defaults. Two wizard tests did exactly that and disabled voice on every `cargo test` run for an evening before anyone found the writer (#1399). `atomic_write` now refuses a path directly in the live default home under `cfg(test)`; if your test hits that refusal, the test is wrong, not the guard. Never disable or work around it.
+
 ### Commit Discipline — Atomic Commits
 
-**One logical change per commit.** A commit should land a single bug fix, a single feature, or a single refactor — not a mixed bag.
+**Always do atomic commits:** repository-wide atomic commits (grouping all files changed for a single logical change) combined with short-lived feature branches or stacked pull requests.
+
+Repository-wide means the unit is the logical change, not the file. Every file a change touches lands in the same commit, so the tree builds and the tests pass at every commit and a revert or bisect can land on a single sha. Three unrelated edits in one file are three commits; one change spread across ten files is one commit. Each commit branches off `main` on a short-lived branch and lands as its own PR, or as one PR in a stack when later commits depend on earlier ones.
 
 - **Don't bundle** `cargo fmt` drift with feature work. Run fmt in its own commit (`chore: cargo fmt`).
 - **Don't bundle** rename / move / restructure with logic changes. The reviewer cannot tell what's mechanical and what's behavioural.
@@ -248,7 +278,7 @@ src/
 
 ### Commit Messages
 
-Use [Conventional Commits](https://www.conventionalcommits.org/):
+Use [Conventional Commits](https://www.conventionalcommits.org/), the same shape as issue titles (see **Issue Titles** above):
 
 ```
 feat: add voice message support for Discord channel
@@ -265,6 +295,7 @@ To be transparent, here's what will get your PR closed immediately:
 - **Fails CI** — If `cargo fmt --check`, `cargo clippy`, or `cargo test` fail
 - **Unrelated changes** — Reformatting files you didn't modify, drive-by "improvements"
 - **No tests** — Bug fixes without a regression test, features without any tests
+- **Tests that write the live config** — A test that saves `config.toml` or `keys.toml` outside a home override
 - **AI-generated spam** — PRs that look like they were generated by an LLM with no understanding of the codebase
 
 ## Don't Know How to Code?

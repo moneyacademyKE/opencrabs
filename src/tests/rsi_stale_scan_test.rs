@@ -351,12 +351,43 @@ fn witness_top_level_sections_match_known_list() {
         "brain",
         "browser",
         "doctor",
+        "tui",
     ]
     .to_vec();
     known.sort_unstable();
     assert_eq!(
         sections, known,
         "compiled schema and known-section list drifted — sync both consciously"
+    );
+
+    // Triangle closure: the loader's runtime typo-warning list must match the
+    // same schema. Before this assertion existed the const was referenced only
+    // by a comment and drifted (tui + doctor missing) while this test stayed
+    // green — the exact regression that shipped false "Unknown keys" warnings.
+    // `gateway` is a serde alias accepted by the loader but canonicalized
+    // before lookup, so it lives only in the loader list.
+    let mut loader_known: Vec<&str> = crate::config::Config::KNOWN_TOP_LEVEL_KEYS
+        .iter()
+        .copied()
+        .filter(|k| *k != "gateway")
+        .collect();
+    loader_known.sort_unstable();
+    assert_eq!(
+        known, loader_known,
+        "loader's KNOWN_TOP_LEVEL_KEYS drifted from the schema — add the section to src/config/types/loader.rs"
+    );
+
+    // Third leg (#1385): the #1199 write gate keeps its own copy of the
+    // schema. Nothing pinned it, so it drifted — a phantom `voice` entry
+    // (writes passed the gate, serde discarded the table) and eight real
+    // sections missing (writes to `daemon`, `memory`, `brain`… refused as
+    // orphans). `voice` is a derived read view, not a table, so it correctly
+    // appears in none of the three lists.
+    let mut gate: Vec<&str> = crate::config::sections::CONFIG_SECTIONS.to_vec();
+    gate.sort_unstable();
+    assert_eq!(
+        sections, gate,
+        "CONFIG_SECTIONS drifted from the schema — sync src/config/sections.rs"
     );
 }
 

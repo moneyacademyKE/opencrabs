@@ -54,7 +54,7 @@ pub(crate) enum DisplayItem {
 /// sanitized intermediate text (escaped at render time). Interleaving both in
 /// one ordered flow lets tool calls and intermediate text share a single
 /// collapsed block instead of each landing as a separate message.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum FlowEntry {
     /// A tool call at this index in `tool_msgs`.
     Tool(usize),
@@ -98,6 +98,12 @@ pub(crate) struct StreamingState {
     /// when the first entry lands; stays open for the rest of the turn so the
     /// final response is the only clean message at the bottom.
     pub(crate) open_group_msg_id: Option<MessageId>,
+    /// Consecutive transport failures on the open block's rich edit (#1323).
+    /// A dropped socket is temporary, so the edit is retried on the next tick
+    /// rather than downgrading the block to HTML for the rest of its life.
+    /// Counted so an endpoint that is genuinely unreachable still reaches HTML
+    /// instead of spinning; reset by the first edit that lands.
+    pub(crate) rich_transport_failures: u8,
     /// Ordered entries in the open processing-log message (tool calls +
     /// intermediate text, in chronological order). Rendered together into the
     /// `open_group_msg_id` message on every append/status change.
@@ -1149,6 +1155,15 @@ pub(crate) async fn refresh_flow(
     }
 }
 
+/// How many consecutive transport failures a rich block absorbs before giving
+/// up and downgrading to HTML (#1323).
+///
+/// The edit loop ticks about every 1.5s, so this is a couple of seconds of
+/// unreachability. Long enough to ride out the socket-exhaustion blips that
+/// produced the measured downgrades, short enough that a genuinely dead
+/// endpoint still delivers something promptly.
+pub(crate) const MAX_RICH_TRANSPORT_RETRIES: u8 = 3;
+
 /// How a failed rich-details edit should be recovered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RichEditError {
@@ -1157,6 +1172,11 @@ pub(crate) enum RichEditError {
     /// A 429 rate limit — skip and retry rich next tick (never fall back to
     /// HTML, whose smaller limit would split the block; #580).
     RateLimited,
+    /// The request never reached Telegram: a dropped connection, a socket the
+    /// OS would not allocate, DNS failing. Temporary, like a 429, and for the
+    /// same reason must not fall back — but bounded, so an endpoint that is
+    /// genuinely unreachable still ends up delivering something (#1323).
+    Transport,
     /// Any other failure — fall back to the HTML edit path.
     Fallback,
 }
@@ -1168,9 +1188,33 @@ pub(crate) fn classify_rich_edit_error(msg: &str) -> RichEditError {
         RichEditError::NotModified
     } else if msg.contains("429") || msg.contains("Too Many Requests") {
         RichEditError::RateLimited
+    } else if is_transport_failure(msg) {
+        RichEditError::Transport
     } else {
         RichEditError::Fallback
     }
+}
+
+/// Whether a failure happened below HTTP: the request never reached Telegram,
+/// so no response exists and the content was never judged.
+///
+/// `reqwest` raises "error sending request for url (…)" for the whole class,
+/// which is why that phrase carries the decision. The others are the shapes
+/// seen when a connection is established and then lost mid-flight.
+///
+/// This is deliberately a small allowlist rather than "anything not
+/// recognised". A malformed-content error is a permanent property of the
+/// message and must keep falling back to HTML; treating the unknown as
+/// transient would turn every real content bug into a retry loop.
+pub(crate) fn is_transport_failure(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("error sending request")
+        || m.contains("connection closed")
+        || m.contains("connection reset")
+        || m.contains("connection refused")
+        || m.contains("broken pipe")
+        || m.contains("dns error")
+        || m.contains("operation timed out")
 }
 
 /// Rich-details edit path (#420 path A). 32K char limit, 30K freeze
@@ -1218,7 +1262,14 @@ pub(crate) async fn refresh_flow_rich_details(
     {
         // The plan Approve/Discard keyboard now rides the persistent plan card,
         // not the flow block (#580), so the flow block carries no reply_markup.
-        Ok(_) => {}
+        Ok(_) => {
+            // The block is reachable again; forget the transport streak so a
+            // later blip gets its own full budget.
+            streaming
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .rich_transport_failures = 0;
+        }
         Err(e) => match classify_rich_edit_error(&e.to_string()) {
             RichEditError::NotModified => {}
             // A transient 429 must NOT fall back to HTML. The rich API holds 32K
@@ -1234,6 +1285,35 @@ pub(crate) async fn refresh_flow_rich_details(
                      will retry rich (not HTML, to avoid a size-split)",
                     mid
                 );
+            }
+            // The request never reached Telegram, so the content was never
+            // judged: nothing about the message is known to be wrong. Treat it
+            // like a 429 and retry rich on the next tick, because downgrading
+            // a block permanently over a briefly unavailable socket is the
+            // same bad trade #580 rejected for rate limits. Bounded, so an
+            // endpoint that is genuinely unreachable still delivers through
+            // HTML rather than retrying forever.
+            RichEditError::Transport => {
+                let streak = {
+                    let mut s = streaming.lock().unwrap_or_else(|e| e.into_inner());
+                    s.rich_transport_failures = s.rich_transport_failures.saturating_add(1);
+                    s.rich_transport_failures
+                };
+                if streak <= MAX_RICH_TRANSPORT_RETRIES {
+                    tracing::warn!(
+                        "Telegram: rich details edit hit a transport failure for mid={:?}                          (attempt {}/{}) — retrying rich next tick, not downgrading",
+                        mid,
+                        streak,
+                        MAX_RICH_TRANSPORT_RETRIES
+                    );
+                } else {
+                    tracing::warn!(
+                        "Telegram: rich details edit transport failures exhausted for mid={:?}                          after {} attempts — falling back to HTML",
+                        mid,
+                        MAX_RICH_TRANSPORT_RETRIES
+                    );
+                    refresh_flow_html(bot, chat, mid, streaming, class).await;
+                }
             }
             // Non-rate-limit errors (malformed content, etc.) fall back to HTML,
             // which is the right recovery there.
@@ -2009,6 +2089,19 @@ pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
     overlap >= 20 && (norm_final.starts_with(&norm_folded) || norm_folded.starts_with(&norm_final))
 }
 
+/// A post-halt run larger than this is not a sign-off — it is a substantive
+/// answer misfiled by position (#58). Counted in chars, not bytes.
+pub(crate) const MAX_TRAILER_CHARS: usize = 600;
+
+/// #58 cap+reroute decision, split out pure so the threshold matrix is
+/// unit-testable without a loaded config (`should_render_mermaid` reads
+/// `Config::current()`). A mermaid fence in the trailer would ship as raw
+/// fence text — the fence→PNG conversion only runs on the final-answer
+/// send — and an oversized trailer is a second answer, not a sign-off.
+pub(crate) fn trailer_promotes_to_answer(has_mermaid: bool, char_count: usize) -> bool {
+    has_mermaid || char_count > MAX_TRAILER_CHARS
+}
+
 /// Settle the options-pending reclaim into `(final text, trailer)` (#31).
 ///
 /// `content` is the response.content text — with an option-surface halt the
@@ -2026,6 +2119,14 @@ pub(crate) fn folded_duplicates_final(folded: &str, final_text: &str) -> bool {
 /// - Keep-never-discard: when the popper found no trailer run but content
 ///   carries a non-duplicate leftover (the ack never folded into the flow),
 ///   the content text BECOMES the trailer instead of vanishing.
+/// - #58 cap+reroute (owner-approved Option A): a trailer carrying a
+///   mermaid fence or exceeding [`MAX_TRAILER_CHARS`] is substantive answer
+///   text misfiled by position, NOT a sign-off. It is promoted to the
+///   answer slot — the normal final-answer send renders its fence to PNG
+///   for free — and the host it displaces demotes to the trailer (nothing
+///   dies). Live miss 2026-09-01 04:21Z: a 2668-byte design answer rode
+///   after the buttons, its fence shipped as raw text, the pre-rendered
+///   PNG died in the render cache (#58).
 pub(crate) fn settle_options_reclaim(
     content: String,
     host: Option<String>,
@@ -2045,5 +2146,20 @@ pub(crate) fn settle_options_reclaim(
             _ => None,
         },
     };
+    // #58 cap+reroute (owner-approved Option A): reject a misfiled trailer —
+    // promote it to the answer, demote the displaced host to the trailer.
+    if let Some(t) = trailer.as_ref().filter(|t| {
+        trailer_promotes_to_answer(
+            super::rich::mermaid::should_render_mermaid(t),
+            t.chars().count(),
+        )
+    }) {
+        let demoted = if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        };
+        return (t.clone(), demoted);
+    }
     (text, trailer)
 }

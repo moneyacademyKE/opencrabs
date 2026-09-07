@@ -41,121 +41,52 @@ pub fn interact_err(e: InteractError) -> anyhow::Error {
 /// database at a specific version (e.g. `to_version(32)`) before exercising
 /// the migration runner. Order and content are the migration contract:
 /// never reorder or edit applied entries, only append new ones.
+/// Every migration, oldest first. Adding one is adding its `include_str!`
+/// here and nothing else: [`Database::MIGRATION_COUNT`] is this list's
+/// length, so the count cannot drift from the list (#1354, after #1292).
+pub(crate) const MIGRATION_SQL: &[&str] = &[
+    include_str!("../migrations/20251028000001_initial_schema.sql"),
+    include_str!("../migrations/20251028000002_modernize_schema.sql"),
+    include_str!("../migrations/20251111000001_add_plans.sql"),
+    include_str!("../migrations/20251113000001_add_plan_enhancements.sql"),
+    include_str!("../migrations/20260224000001_add_a2a_tasks.sql"),
+    include_str!("../migrations/20260226000001_add_session_provider.sql"),
+    include_str!("../migrations/20260305000001_add_channel_messages.sql"),
+    include_str!("../migrations/20260305000002_add_cron_jobs.sql"),
+    include_str!("../migrations/20260306000001_add_usage_ledger.sql"),
+    include_str!("../migrations/20260307000001_add_session_working_dir.sql"),
+    include_str!("../migrations/20260308000001_add_pending_requests.sql"),
+    include_str!("../migrations/20260330000001_pending_requests_channel_chat_id.sql"),
+    include_str!("../migrations/20260402000001_add_cron_job_runs.sql"),
+    include_str!("../migrations/20260412000001_add_feedback_ledger.sql"),
+    include_str!("../migrations/20260415000001_add_tool_executions.sql"),
+    include_str!("../migrations/20260415000002_add_session_category.sql"),
+    include_str!("../migrations/20260415000003_fix_tool_executions_schema.sql"),
+    include_str!("../migrations/20260416000001_add_message_input_tokens.sql"),
+    include_str!("../migrations/20260421000001_add_message_thinking.sql"),
+    include_str!("../migrations/20260426000001_add_recent_paths.sql"),
+    include_str!("../migrations/20260507000001_add_cron_deliver_api_key.sql"),
+    include_str!("../migrations/20260517000001_cron_jobs_text_recast.sql"),
+    include_str!("../migrations/20260522000001_add_auto_title_attempted.sql"),
+    include_str!("../migrations/20260529000001_add_channel_thread_id.sql"),
+    include_str!("../migrations/20260606000001_add_message_cache_tokens.sql"),
+    include_str!("../migrations/20260608000001_add_cron_job_profile.sql"),
+    include_str!("../migrations/20260614000001_add_projects_and_file_size.sql"),
+    include_str!("../migrations/20260626000001_add_goal_state.sql"),
+    include_str!("../migrations/20260706000001_add_usage_ledger_provider.sql"),
+    include_str!("../migrations/20260713000001_drop_orphaned_plans_tables.sql"),
+    include_str!("../migrations/20260725000001_add_background_tasks.sql"),
+    include_str!("../migrations/20260726000001_add_plan_cards.sql"),
+    include_str!("../migrations/20260731000001_add_analytics_events.sql"),
+    include_str!("../migrations/20260808000001_add_message_duration.sql"),
+    include_str!("../migrations/20260822000001_add_a2a_context_sessions.sql"),
+    include_str!("../migrations/20260826000001_add_session_bindings.sql"),
+    include_str!("../migrations/20260828000001_pending_requests_origin.sql"),
+    include_str!("../migrations/20260902000001_add_pending_followups.sql"),
+];
+
 pub(crate) fn build_migrations() -> Migrations<'static> {
-    Migrations::new(vec![
-        M::up(include_str!(
-            "../migrations/20251028000001_initial_schema.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20251028000002_modernize_schema.sql"
-        )),
-        M::up(include_str!("../migrations/20251111000001_add_plans.sql")),
-        M::up(include_str!(
-            "../migrations/20251113000001_add_plan_enhancements.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260224000001_add_a2a_tasks.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260226000001_add_session_provider.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260305000001_add_channel_messages.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260305000002_add_cron_jobs.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260306000001_add_usage_ledger.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260307000001_add_session_working_dir.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260308000001_add_pending_requests.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260330000001_pending_requests_channel_chat_id.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260402000001_add_cron_job_runs.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260412000001_add_feedback_ledger.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260415000001_add_tool_executions.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260415000002_add_session_category.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260415000003_fix_tool_executions_schema.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260416000001_add_message_input_tokens.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260421000001_add_message_thinking.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260426000001_add_recent_paths.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260507000001_add_cron_deliver_api_key.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260517000001_cron_jobs_text_recast.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260522000001_add_auto_title_attempted.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260529000001_add_channel_thread_id.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260606000001_add_message_cache_tokens.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260608000001_add_cron_job_profile.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260614000001_add_projects_and_file_size.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260626000001_add_goal_state.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260706000001_add_usage_ledger_provider.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260713000001_drop_orphaned_plans_tables.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260725000001_add_background_tasks.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260726000001_add_plan_cards.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260731000001_add_analytics_events.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260808000001_add_message_duration.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260822000001_add_a2a_context_sessions.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260826000001_add_session_bindings.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260828000001_pending_requests_origin.sql"
-        )),
-        M::up(include_str!(
-            "../migrations/20260902000001_add_pending_followups.sql"
-        )),
-    ])
+    Migrations::new(MIGRATION_SQL.iter().copied().map(M::up).collect())
 }
 
 /// Heal a database that partially carries migration 33's artifacts (#937).
@@ -361,8 +292,9 @@ impl Database {
         self.pool.status().size > 0 || self.pool.status().max_size > 0
     }
 
-    /// Total number of migrations defined below — keep in sync when adding new ones.
-    pub const MIGRATION_COUNT: usize = 38;
+    /// Total number of migrations, derived from `MIGRATION_SQL` so it can
+    /// never lag behind the list.
+    pub const MIGRATION_COUNT: usize = MIGRATION_SQL.len();
 
     /// Run database migrations
     pub async fn run_migrations(&self) -> Result<()> {
@@ -372,43 +304,52 @@ impl Database {
             .get()
             .await
             .context("Failed to get connection for migrations")?
-            .interact(move |conn| {
-                // Detect databases previously managed by sqlx: if the _sqlx_migrations
-                // table exists but rusqlite_migration hasn't run yet (user_version == 0),
-                // stamp the current version so we don't re-run already-applied migrations.
-                let user_version: i64 =
-                    conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-                let has_sqlx: bool = conn
-                    .prepare(
-                        "SELECT COUNT(*) FROM sqlite_master \
+            .interact(
+                move |conn| -> std::result::Result<(), rusqlite_migration::Error> {
+                    // Detect databases previously managed by sqlx: if the _sqlx_migrations
+                    // table exists but rusqlite_migration hasn't run yet (user_version == 0),
+                    // stamp the current version so we don't re-run already-applied migrations.
+                    let user_version: i64 =
+                        conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+                    let has_sqlx: bool = conn
+                        .prepare(
+                            "SELECT COUNT(*) FROM sqlite_master \
                          WHERE type='table' AND name='_sqlx_migrations'",
-                    )?
-                    .query_row([], |r| r.get::<_, i64>(0))
-                    .map(|c| c > 0)?;
+                        )?
+                        .query_row([], |r| r.get::<_, i64>(0))
+                        .map(|c| c > 0)?;
 
-                if has_sqlx && user_version == 0 {
-                    tracing::info!(
-                        "Detected sqlx-managed database — stamping migration version to {}",
-                        Self::MIGRATION_COUNT
-                    );
-                    conn.pragma_update(None, "user_version", Self::MIGRATION_COUNT as i64)?;
-                }
+                    if has_sqlx && user_version == 0 {
+                        tracing::info!(
+                            "Detected sqlx-managed database — stamping migration version to {}",
+                            Self::MIGRATION_COUNT
+                        );
+                        conn.pragma_update(None, "user_version", Self::MIGRATION_COUNT as i64)?;
+                    }
 
-                // Defensive heal for migration 33 (add_analytics_events), #937:
-                // databases that already carry some of migration 33's artifacts
-                // (e.g. a provider column added by an intermediate build) would
-                // crash the migration's ALTER TABLE with "duplicate column name".
-                // Only fires when migration 33 is the NEXT migration to run
-                // (user_version == 32) so it can never skip migrations 1-32.
-                // Heals the schema to the full migration-33 state and stamps
-                // user_version so to_latest skips it; when nothing pre-exists
-                // the normal migration runs untouched.
-                if user_version == 32 && heal_analytics_migration_33(conn)? {
-                    conn.pragma_update(None, "user_version", 33i64)?;
-                }
+                    // Defensive heal for migration 33 (add_analytics_events), #937:
+                    // databases that already carry some of migration 33's artifacts
+                    // (e.g. a provider column added by an intermediate build) would
+                    // crash the migration's ALTER TABLE with "duplicate column name".
+                    // Only fires when migration 33 is the NEXT migration to run
+                    // (user_version == 32) so it can never skip migrations 1-32.
+                    // Heals the schema to the full migration-33 state and stamps
+                    // user_version so to_latest skips it; when nothing pre-exists
+                    // the normal migration runs untouched.
+                    if user_version == 32 && heal_analytics_migration_33(conn)? {
+                        conn.pragma_update(None, "user_version", 33i64)?;
+                    }
 
-                migrations.to_latest(conn)
-            })
+                    migrations.to_latest(conn)?;
+
+                    // Schema-checked heals run AFTER the stamp-driven pass: a
+                    // migration that two branches appended at the same index can
+                    // be skipped with the stamp already past it (#1401), and only
+                    // the schema itself can say so.
+                    crate::db::migration_heal::heal_pending_requests_origin(conn)?;
+                    Ok(())
+                },
+            )
             .await
             .map_err(interact_err)?
             .context("Failed to run database migrations")?;

@@ -94,6 +94,27 @@ pub struct Config {
     /// Self-repair configuration for `/doctor --fix` and the startup sweep
     #[serde(default)]
     pub doctor: DoctorConfig,
+
+    /// TUI (terminal UI) configuration: theme, display preferences.
+    /// Optional — defaults preserve current (crab-dark) rendering.
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+/// TUI (terminal UI) configuration.
+///
+/// ```toml
+/// [tui]
+/// theme = "dracula"   # any built-in or user preset; omit for crab-dark default
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TuiConfig {
+    /// Active theme name. Case-insensitive lookup against built-in presets
+    /// (crab-dark, dracula, alucard, monokai, solarized-light, solarized-dark,
+    /// catppuccin-mocha, catppuccin-latte) and user presets under
+    /// `~/.opencrabs/themes/*.toml`. `None` / empty = crab-dark default.
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 /// Custom deserializer for `[brain.caps]` that accepts both:
@@ -395,9 +416,33 @@ where
     }))
 }
 
+/// Telegram userbot configuration — the receive-only MTProto user session.
+///
+/// This plane logs in as the user's account and receives updates from chats the
+/// Bot API cannot see. Text from `allowed_chats` is passively stored for
+/// explicit retrieval; it never invokes the agent or writes to Telegram.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelegramUserbotConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Telegram app api_id (my.telegram.org → API development tools).
+    pub api_id: Option<i64>,
+    /// Telegram app api_hash — a secret; belongs in keys.toml.
+    pub api_hash: Option<String>,
+    /// Login phone in international format (e.g. +2547…).
+    pub phone: Option<String>,
+    /// Local session path. Default: <opencrabs home>/telegram_userbot.session
+    pub session_path: Option<String>,
+    /// Chat IDs whose inbound text may be passively stored. Empty = dry mode.
+    #[serde(default)]
+    pub allowed_chats: Vec<String>,
+}
+
 /// Telegram channel configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelegramConfig {
+    #[serde(default)]
+    pub userbot: TelegramUserbotConfig,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
@@ -2519,9 +2564,10 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
 
-    /// Kimi reasoning control (e.g. `max` for K3, `on`/`off` for K2.x).
-    /// Applied to each request only when the active model accepts it
-    /// (see `kimi_reasoning`); an inapplicable value is a no-op.
+    /// Reasoning control, resolved per family: Kimi (`max` on K3, `on`/`off`
+    /// on K2.x), qwen rungs, DeepSeek / GLM-5.3+ `low | high | max` (a rung
+    /// from another family is mapped and logged, see `glm_reasoning`).
+    /// Applied only when the active model accepts it; otherwise a no-op.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
 
@@ -2636,6 +2682,7 @@ impl Default for Config {
                 file: None,
             },
             debug: DebugConfig::default(),
+            tui: TuiConfig::default(),
             providers: ProviderConfigs::default(),
             channels: ChannelsConfig::default(),
             agent: AgentConfig::default(),
@@ -2651,9 +2698,10 @@ impl Default for Config {
     }
 }
 
-mod io;
+pub(crate) mod io;
 pub use io::*;
 // Private keys helpers used by the loader submodule (sibling of `io`).
 pub(crate) use io::{load_keys_from_file, merge_channel_keys};
 mod loader;
 pub use loader::*;
+mod voice_port;

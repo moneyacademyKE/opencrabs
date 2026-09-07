@@ -12,7 +12,9 @@
 use crate::brain::agent::service::announcement_loop::{
     OutgoingTextRing, TextLoopAction, near_duplicate,
 };
-use crate::brain::agent::service::helpers::{normalize_loop_text, normalized_call_signature};
+use crate::brain::agent::service::helpers::{
+    normalize_loop_arg, normalize_loop_text, normalized_call_signature,
+};
 use serde_json::json;
 
 // ---- normalize_loop_text ----
@@ -112,10 +114,11 @@ fn signature_is_namespaced_by_tool_name() {
 }
 
 #[test]
-fn read_file_chunk_offsets_would_collide_hence_excluded() {
-    // Documents WHY the tool loop excludes read_file from the near-match:
-    // once digits are stripped, chunked reads differing only in start_line
-    // collapse to the same signature and would trip a false positive.
+fn read_file_chunk_offsets_stay_apart() {
+    // #82: numeric argument values are preserved exactly, so chunked reads
+    // differing only in start_line no longer collapse — the tool loop no
+    // longer needs its read_file exclusion, and genuine read loops (same
+    // path, same range) still collide.
     let a = normalized_call_signature(
         "read_file",
         &json!({"path": "src/main.rs", "start_line": 100, "line_count": 50}),
@@ -124,7 +127,136 @@ fn read_file_chunk_offsets_would_collide_hence_excluded() {
         "read_file",
         &json!({"path": "src/main.rs", "start_line": 150, "line_count": 50}),
     );
+    assert_ne!(a, b);
+
+    // Identical chunked reads (the stuck-loop shape) still collide.
+    let c = normalized_call_signature(
+        "read_file",
+        &json!({"path": "src/main.rs", "start_line": 100, "line_count": 50}),
+    );
+    assert_eq!(a, c);
+}
+
+#[test]
+fn plan_checklist_progression_stays_apart() {
+    // #82 real-world false positive (2026-09-02): completing plan checklist
+    // tasks differs ONLY in task_order — digit-stripping collapsed the
+    // progression into one signature, nudging and then breaking a session
+    // mid-checklist. Numeric fields must keep the calls distinct, while a
+    // literally identical stuck plan call still collides.
+    let done = |n: i64| {
+        normalized_call_signature("plan", &json!({"operation": "complete", "task_order": n}))
+    };
+    assert_ne!(done(1), done(2));
+    assert_ne!(done(2), done(3));
+    assert_eq!(done(3), done(3));
+}
+
+#[test]
+fn normalize_loop_arg_drops_lone_digits_and_keeps_identifiers() {
+    // Lone digits are counters; digits inside a longer token are part of
+    // an identifier and survive (#1397).
+    assert_eq!(normalize_loop_arg("attempt 1 of 6"), "attempt of");
+    assert_eq!(
+        normalize_loop_arg("gh pr merge 1394 --squash"),
+        "gh pr merge 1394 squash"
+    );
+    assert_eq!(
+        normalize_loop_arg("sed -n '490,570p' x.rs"),
+        "sed n 490 570p x rs"
+    );
+    assert_eq!(normalize_loop_arg("git show b3b615ee"), "git show b3b615ee");
+    assert_eq!(normalize_loop_arg("curl :8080/v1"), "curl 8080 v1");
+}
+
+#[test]
+fn bash_pr_merges_with_different_numbers_stay_apart() {
+    // The 2026-09-05 16:08 trip: merging PRs one by one was counted as one
+    // call recurring four times and the pending merge was dropped (#1397).
+    let merge = |n: u32| {
+        normalized_call_signature(
+            "bash",
+            &json!({"command": format!("cd ~/srv/rs/opencrabs && gh pr merge {n} --squash --admin --delete-branch")}),
+        )
+    };
+    assert_ne!(merge(1394), merge(1391));
+    assert_ne!(merge(1391), merge(1390));
+    // A literally re-issued merge (the call the nudge intercepted) still
+    // collides with itself, so a genuine stuck merge is still counted.
+    assert_eq!(merge(1390), merge(1390));
+}
+
+#[test]
+fn bash_file_paging_ranges_stay_apart() {
+    // The 16:40 and 16:52 trips: reading one file at different line ranges
+    // while resolving a merge conflict (#1397).
+    let page = |range: &str| {
+        normalized_call_signature(
+            "bash",
+            &json!({"command": format!("sed -n '{range}' src/channels/telegram/agent.rs")}),
+        )
+    };
+    assert_ne!(page("490,570p"), page("495,580p"));
+    assert_ne!(page("100,150p"), page("200,250p"));
+    assert_eq!(page("490,570p"), page("490,570p"));
+}
+
+#[test]
+fn bash_commands_with_different_shas_stay_apart() {
+    let show = |sha: &str| {
+        normalized_call_signature(
+            "bash",
+            &json!({"command": format!("git show {sha} --stat")}),
+        )
+    };
+    assert_ne!(show("b3b615ee"), show("d7e40ceb"));
+    assert_eq!(show("b3b615ee"), show("b3b615ee"));
+}
+
+#[test]
+fn bash_counter_loops_still_collide() {
+    // The #957 contract survives the identifier change: a lone-digit
+    // counter is still erased, so the Luna echo loop and "attempt N of 6"
+    // keep collapsing to one signature.
+    let echo = |n: u32| {
+        normalized_call_signature(
+            "bash",
+            &json!({"command": format!("echo \"Отправляю {n} подтверждение в ДДС\"")}),
+        )
+    };
+    assert_eq!(echo(1), echo(2));
+    assert_eq!(echo(2), echo(9));
+    let attempt = |n: u32| {
+        normalized_call_signature(
+            "bash",
+            &json!({"command": format!("echo attempt {n} of 6")}),
+        )
+    };
+    assert_eq!(attempt(1), attempt(5));
+}
+
+#[test]
+fn identifiers_in_non_bash_string_args_stay_apart_too() {
+    // The rule is per string argument, not per tool: an issue number in a
+    // grep pattern or a numbered file name is an identifier everywhere.
+    let g = |pat: &str| normalized_call_signature("grep", &json!({"pattern": pat, "path": "src"}));
+    assert_ne!(g("#1394"), g("#1390"));
+    let r = |f: &str| normalized_call_signature("read_file", &json!({"path": f}));
+    assert_ne!(
+        r("migrations/0042_users.sql"),
+        r("migrations/0043_users.sql")
+    );
+}
+
+#[test]
+fn numeric_and_bool_fields_are_order_independent_and_exact() {
+    // Numeric/bool params are kept exactly and sorted by key, so argument
+    // insertion order never changes the signature (#82).
+    let a = normalized_call_signature("bash", &json!({"command": "sleep 5", "timeout_secs": 120}));
+    let b = normalized_call_signature("bash", &json!({"timeout_secs": 120, "command": "sleep 5"}));
     assert_eq!(a, b);
+    let c = normalized_call_signature("bash", &json!({"command": "sleep 5", "timeout_secs": 60}));
+    assert_ne!(a, c);
 }
 
 // ---- near_duplicate ----
