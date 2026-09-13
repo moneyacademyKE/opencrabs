@@ -23,6 +23,7 @@ pub const SESSION_PROMPT: &str = "session/prompt";
 pub const SESSION_SET_MODEL: &str = "session/set_model";
 pub const SESSION_SET_MODE: &str = "session/set_mode";
 pub const SESSION_CANCEL: &str = "session/cancel";
+pub const SESSION_COMPACT: &str = "session/compact";
 pub const SESSION_STEER: &str = "session/steer";
 
 // Outbound frames (agent -> client).
@@ -377,7 +378,13 @@ mod tests {
 
     #[test]
     fn mode_parse_round_trips_advertised_ids() {
-        for id in ["supervised", "auto-accept-edits", "auto", "full-access", "plan"] {
+        for id in [
+            "supervised",
+            "auto-accept-edits",
+            "auto",
+            "full-access",
+            "plan",
+        ] {
             let mode = AcpMode::parse(id).expect("advertised id parses");
             assert_eq!(mode.id(), id);
         }
@@ -396,7 +403,13 @@ mod tests {
             .collect();
         assert_eq!(
             ids,
-            vec!["supervised", "auto-accept-edits", "auto", "full-access", "plan"]
+            vec![
+                "supervised",
+                "auto-accept-edits",
+                "auto",
+                "full-access",
+                "plan"
+            ]
         );
     }
 
