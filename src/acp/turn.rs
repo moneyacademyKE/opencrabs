@@ -58,6 +58,7 @@ pub async fn run_turn(
             Some(progress),
             "acp",
             None,
+            None,
         )
         .await;
 

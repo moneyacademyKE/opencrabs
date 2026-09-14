@@ -851,7 +851,7 @@ pub(crate) async fn cmd_acp(config: &crate::config::Config, model: Option<String
 
     let tool_registry = Arc::new(ToolRegistry::new());
     let subagent_manager =
-        crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config);
+        crate::cli::tool_setup::register_core_agent_tools(&tool_registry, &db, config, true);
 
     let brain_path = BrainLoader::resolve_path();
     let brain_loader = BrainLoader::new(brain_path.clone());
@@ -864,7 +864,7 @@ pub(crate) async fn cmd_acp(config: &crate::config::Config, model: Option<String
     };
     let mut system_brain = brain_loader.build_system_brain(Some(&runtime_info));
     if config.agent.lazy_tools {
-        system_brain.push_str(&crate::brain::tools::catalog::tool_access_prompt());
+        system_brain.push_str(&crate::brain::tools::catalog::tool_access_prompt(true));
     }
 
     crate::cli::tool_setup::register_runtime_tools(&tool_registry, config);
