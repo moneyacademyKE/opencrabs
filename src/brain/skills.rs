@@ -18,7 +18,10 @@
 //! `src/docs/reference/templates/skills/<name>/SKILL.md`, embedded at
 //! compile time via `include_str!`. The user directory at
 //! `~/.opencrabs/skills/` is purely user-owned (per `TOOLS.md`); writes
-//! never come from the binary.
+//! never come from the binary — with ONE sanctioned exception: the crab
+//! installer (`brain::crabs`), which copies declared skill dirs in as
+//! the approval-gated, ledger-tracked, reversible (`crab remove`) part
+//! of installing a crab.
 //!
 //! ## Resolution order
 //!
@@ -81,6 +84,10 @@ const BUILTIN_SKILLS: &[(&str, &str)] = &[
     (
         "multi-agent",
         include_str!("../docs/reference/templates/skills/multi-agent/SKILL.md"),
+    ),
+    (
+        "crab",
+        include_str!("../docs/reference/templates/skills/crab/SKILL.md"),
     ),
 ];
 
