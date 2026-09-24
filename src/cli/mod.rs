@@ -5,6 +5,7 @@
 mod args;
 pub(crate) mod commands;
 pub(crate) mod crash_recovery;
+mod crab;
 mod cron;
 pub(crate) mod daemon_health;
 pub(crate) mod doctor_fix;
