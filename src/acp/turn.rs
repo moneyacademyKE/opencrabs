@@ -173,11 +173,11 @@ impl CallIdPairing {
     /// A denied or failed ask: the tool never starts, so its pre-minted id
     /// must not leak into the next same-name call.
     pub(crate) fn retract_for_deny(&self, tool: &str) {
-        if let Ok(mut pending) = self.pending.lock() {
-            if let Some(queue) = pending.get_mut(tool) {
-                queue.pop_back();
-            }
-        }
+    if let Ok(mut pending) = self.pending.lock()
+        && let Some(queue) = pending.get_mut(tool)
+    {
+        queue.pop_back();
+    }
     }
 
     /// `ToolStarted` adopts a pending permission id when one exists (the
