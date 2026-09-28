@@ -7,7 +7,9 @@ use crate::brain::provider::StopReason;
 fn stop_reasons_map_to_acp() {
     assert_eq!(stop_reason(Some(StopReason::EndTurn)), "end_turn");
     assert_eq!(stop_reason(Some(StopReason::MaxTokens)), "max_tokens");
-    assert_eq!(stop_reason(Some(StopReason::StopSequence)), "stop_sequence");
+    // A stop sequence ends the turn the same way an end-turn does;
+    // "stop_sequence" is not an ACP stopReason value.
+    assert_eq!(stop_reason(Some(StopReason::StopSequence)), "end_turn");
     assert_eq!(stop_reason(Some(StopReason::ToolUse)), "end_turn");
     assert_eq!(stop_reason(None), "end_turn");
 }

@@ -109,7 +109,9 @@ pub async fn run_turn(
 pub(crate) fn stop_reason(reason: Option<StopReason>) -> &'static str {
     match reason {
         Some(StopReason::MaxTokens) => "max_tokens",
-        Some(StopReason::StopSequence) => "stop_sequence",
+        // StopSequence: the model hit a stop token — a natural end. Kept
+        // explicit because "stop_sequence" is NOT an ACP stopReason value.
+        Some(StopReason::StopSequence) => "end_turn",
         // EndTurn/ToolUse/None: the turn completed — ToolUse means the loop
         // ended after tool execution, which from the client's seat is a
         // finished turn.
