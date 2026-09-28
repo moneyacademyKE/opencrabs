@@ -39,13 +39,24 @@ pub async fn run_turn(
 ) {
     let acp_session_id = session.id.to_string();
 
+    // Shared between the progress and approval callbacks: a permission ask
+    // pre-mints the id its tool call will adopt, so the ask and the gated
+    // tool render as one transcript entry instead of two.
+    let pairing = Arc::new(CallIdPairing::new());
     let progress = progress_callback(
         state.handle.clone(),
         acp_session_id.clone(),
         state.agent.clone(),
+        pairing.clone(),
     );
     let mode = *session.mode.lock().await;
-    let approval = approval_callback(state.handle.clone(), acp_session_id, mode, cancel.clone());
+    let approval = approval_callback(
+        state.handle.clone(),
+        acp_session_id,
+        mode,
+        cancel.clone(),
+        pairing,
+    );
 
     let model = session.model.lock().await.clone();
     let result = state
@@ -115,6 +126,86 @@ pub(crate) fn round_text_is_duplicate(streamed: &str, aggregate: &str) -> bool {
     !aggregate.trim().is_empty() && streamed.trim() == aggregate.trim()
 }
 
+/// Pairing state shared by the progress and approval callbacks. ACP clients
+/// merge transcript blocks by `toolCallId`, so a permission request and the
+/// tool call it gates must carry the SAME id — minting a fresh id per ask is
+/// what made every gated tool render as two transcript rows (round 7
+/// dogfood: tool card + orphaned approval block).
+///
+/// The ask fires before the tool starts (approval precedes execution), so
+/// the flow is: `mint_for_ask` when the client is asked; on approval the
+/// tool's `ToolStarted` adopts the pending id via `consume_for_start`; a
+/// deny retracts it so the next same-name call does not adopt a dead id;
+/// `ToolCompleted` pops the started id FIFO. FIFO per tool name is the only
+/// honest pairing the events support.
+pub(crate) struct CallIdPairing {
+    pending: StdMutex<HashMap<String, VecDeque<String>>>,
+    open: StdMutex<HashMap<String, VecDeque<String>>>,
+}
+
+impl Default for CallIdPairing {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CallIdPairing {
+    pub(crate) fn new() -> Self {
+        Self {
+            pending: StdMutex::new(HashMap::new()),
+            open: StdMutex::new(HashMap::new()),
+        }
+    }
+
+    pub(crate) fn mint_for_ask(&self, tool: &str) -> String {
+        let id = Uuid::new_v4().to_string();
+        if let Ok(mut pending) = self.pending.lock() {
+            pending
+                .entry(tool.to_string())
+                .or_default()
+                .push_back(id.clone());
+        }
+        id
+    }
+
+    /// A denied or failed ask: the tool never starts, so its pre-minted id
+    /// must not leak into the next same-name call.
+    pub(crate) fn retract_for_deny(&self, tool: &str) {
+        if let Ok(mut pending) = self.pending.lock() {
+            if let Some(queue) = pending.get_mut(tool) {
+                queue.pop_back();
+            }
+        }
+    }
+
+    /// `ToolStarted` adopts a pending permission id when one exists (the
+    /// gated case — the client already rendered the ask under that id),
+    /// else mints fresh.
+    pub(crate) fn consume_for_start(&self, tool: &str) -> String {
+        let adopted = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.get_mut(tool).and_then(VecDeque::pop_front));
+        let id = adopted.unwrap_or_else(|| Uuid::new_v4().to_string());
+        if let Ok(mut open) = self.open.lock() {
+            open.entry(tool.to_string())
+                .or_default()
+                .push_back(id.clone());
+        }
+        id
+    }
+
+    /// `ToolCompleted` pops the started id, FIFO per tool name.
+    pub(crate) fn complete(&self, tool: &str) -> String {
+        self.open
+            .lock()
+            .ok()
+            .and_then(|mut open| open.get_mut(tool).and_then(VecDeque::pop_front))
+            .unwrap_or_else(|| Uuid::new_v4().to_string())
+    }
+}
+
 /// Map loop progress to `session/update` notifications.
 ///
 /// Tool-call ids are invented here: `ProgressEvent` carries tool names but
@@ -125,9 +216,8 @@ fn progress_callback(
     handle: TransportHandle,
     acp_session_id: String,
     agent: Arc<crate::brain::agent::AgentService>,
+    pairing: Arc<CallIdPairing>,
 ) -> ProgressCallback {
-    let open_calls: Arc<StdMutex<HashMap<String, VecDeque<String>>>> =
-        Arc::new(StdMutex::new(HashMap::new()));
     // Text streamed since the last round boundary. The loop emits live
     // deltas via `StreamingChunk` and then the round's full text again via
     // `IntermediateText` — both map to `agent_message_chunk`, so without a
@@ -172,13 +262,7 @@ fn progress_callback(
                 if let Ok(mut buf) = streamed.lock() {
                     buf.clear();
                 }
-                let call_id = Uuid::new_v4().to_string();
-                if let Ok(mut calls) = open_calls.lock() {
-                    calls
-                        .entry(tool_name.clone())
-                        .or_default()
-                        .push_back(call_id.clone());
-                }
+                let call_id = pairing.consume_for_start(&tool_name);
                 Some(json!({
                     "sessionUpdate": "tool_call",
                     "toolCallId": call_id,
@@ -194,11 +278,7 @@ fn progress_callback(
                 summary,
                 ..
             } => {
-                let call_id = open_calls
-                    .lock()
-                    .ok()
-                    .and_then(|mut calls| calls.get_mut(&tool_name).and_then(VecDeque::pop_front))
-                    .unwrap_or_else(|| Uuid::new_v4().to_string());
+                let call_id = pairing.complete(&tool_name);
                 Some(json!({
                     "sessionUpdate": "tool_call_update",
                     "toolCallId": call_id,
@@ -242,11 +322,13 @@ fn approval_callback(
     acp_session_id: String,
     mode: protocol::AcpMode,
     cancel: CancellationToken,
+    pairing: Arc<CallIdPairing>,
 ) -> ApprovalCallback {
     Arc::new(move |info: ToolApprovalInfo| {
         let handle = handle.clone();
         let acp_session_id = acp_session_id.clone();
         let cancel = cancel.clone();
+        let pairing = pairing.clone();
         Box::pin(async move {
             let kind = protocol::tool_kind(&info.tool_name);
             match mode {
@@ -262,11 +344,16 @@ fn approval_callback(
                 }
                 _ => {}
             }
+            // Pre-mint the id the gated tool call will adopt on approval, so
+            // the permission ask and the tool share one transcript entry
+            // (clients merge blocks by toolCallId).
+            let tool_name = info.tool_name.clone();
+            let call_id = pairing.mint_for_ask(&tool_name);
             let params = json!({
                 "sessionId": acp_session_id,
                 "toolCall": {
-                    "toolCallId": Uuid::new_v4().to_string(),
-                    "title": info.tool_name,
+                    "toolCallId": call_id,
+                    "title": tool_name.clone(),
                     "kind": kind,
                     "rawInput": info.tool_input,
                 },
@@ -285,8 +372,17 @@ fn approval_callback(
                 }
             };
             match outcome {
-                Ok(result) => Ok(permission_outcome(&result)),
+                Ok(result) => {
+                    let (approved, remember) = permission_outcome(&result);
+                    // A denied tool never starts: retract the pre-minted id
+                    // so the next same-name call does not adopt it.
+                    if !approved {
+                        pairing.retract_for_deny(&tool_name);
+                    }
+                    Ok((approved, remember))
+                }
                 Err(e) => {
+                    pairing.retract_for_deny(&tool_name);
                     tracing::warn!("acp permission request failed, denying: {e:#}");
                     Ok((false, false))
                 }
