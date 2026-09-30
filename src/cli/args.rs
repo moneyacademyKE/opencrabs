@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use super::{commands, cron, migrate, ui};
+use super::{commands, crab, cron, migrate, ui};
 use crate::config::Config;
 
 /// OpenCrabs - High-Performance Terminal AI Orchestration Agent
@@ -179,6 +179,12 @@ pub enum Commands {
         operation: CronCommands,
     },
 
+    /// Install, list, and remove crabs — portable skill packs from the Crab Market
+    Crab {
+        #[command(subcommand)]
+        operation: CrabCommands,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -330,6 +336,65 @@ pub enum CronCommands {
     Test {
         /// Job ID or name
         id: String,
+    },
+}
+
+/// Subcommands of `opencrabs crab` — installable skill packs.
+#[derive(Debug, Clone, Subcommand)]
+pub enum CrabCommands {
+    /// Inspect a crab WITHOUT installing: files, frontmatter, blast radius, secret scan
+    Inspect {
+        /// Source: a git URL or a local directory containing crab.toml
+        source: String,
+
+        /// Commit to check out (git sources; default: HEAD)
+        #[arg(long)]
+        pin: Option<String>,
+    },
+
+    /// Install a crab (inspect first; --yes confirms, secrets and drift refuse)
+    Install {
+        /// Source: a git URL or a local directory containing crab.toml
+        source: String,
+
+        /// Commit to install (git sources; default: HEAD)
+        #[arg(long)]
+        pin: Option<String>,
+
+        /// Confirm without the interactive prompt (agent/cron use)
+        #[arg(long)]
+        yes: bool,
+
+        /// Re-approve collisions and upstream drift (explicit re-review)
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// List installed crabs with versions and pins
+    List,
+
+    /// Search the remote Crab Market index (name, description, category)
+    Search {
+        /// Substring query; empty lists the whole market
+        #[arg(default_value = "")]
+        query: String,
+
+        /// Index URL override (default: moneyacademyKE/crab-market raw)
+        #[arg(long)]
+        index: Option<String>,
+    },
+
+    /// Check installed crabs for upstream drift — REPORT ONLY, never applies
+    Updates {
+        /// Index URL override (default: moneyacademyKE/crab-market raw)
+        #[arg(long)]
+        index: Option<String>,
+    },
+
+    /// Remove a crab: deletes exactly the ledger-recorded files
+    Remove {
+        /// Crab name (see `opencrabs crab list`)
+        name: String,
     },
 }
 
@@ -638,6 +703,7 @@ pub async fn run() -> Result<()> {
         Some(Commands::DropAgent { port, roots }) => crate::utils::drop_agent::serve(port, roots),
         Some(Commands::Profile { operation }) => commands::cmd_profile(operation).await,
         Some(Commands::Cron { operation }) => cron::cmd_cron(&config, operation).await,
+        Some(Commands::Crab { operation }) => crab::cmd_crab(&config, operation).await,
         Some(Commands::Completions { shell }) => {
             use clap::CommandFactory;
             clap_complete::generate(
