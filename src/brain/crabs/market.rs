@@ -140,16 +140,18 @@ pub async fn check_updates(home: &Path, index_url: &str) -> Vec<UpdateReport> {
 
 async fn status_for(rec: &CrabRecord, market: &[MarketEntry]) -> UpdateStatus {
     // Market-published pin wins when the crab is listed there.
-    if let Some(entry) = market.iter().find(|e| e.name == rec.crab) {
-        if let Some(pin) = &entry.pin {
-            return if *pin == rec.pin {
-                UpdateStatus::UpToDate
-            } else {
-                UpdateStatus::Drift {
-                    current: pin.clone(),
-                }
-            };
-        }
+    if let Some(pin) = market
+        .iter()
+        .find(|e| e.name == rec.crab)
+        .and_then(|e| e.pin.as_ref())
+    {
+        return if *pin == rec.pin {
+            UpdateStatus::UpToDate
+        } else {
+            UpdateStatus::Drift {
+                current: pin.clone(),
+            }
+        };
     }
     match rec.source.kind.as_str() {
         "git" => {

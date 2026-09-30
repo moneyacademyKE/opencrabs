@@ -142,8 +142,8 @@ pub(crate) async fn cmd_crab(
                 return Ok(());
             }
             println!(
-                "{:<24} {:<10} {:<10} {}",
-                "CRAB", "VERSION", "CATEGORY", "DESCRIPTION"
+                "{:<24} {:<10} {:<10} DESCRIPTION",
+                "CRAB", "VERSION", "CATEGORY"
             );
             for e in &hits {
                 println!(
