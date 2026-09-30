@@ -5,8 +5,8 @@
 //! the secret scan, and the blast radius into one structured
 //! [`Inspection`]. Rendering belongs to the CLI layer; this is data.
 
-use super::scan::{blast_radius, secret_scan, SecretHit};
 use super::CrabManifest;
+use super::scan::{SecretHit, blast_radius, secret_scan};
 use std::path::Path;
 
 /// One skill as seen by the inspect gate.
@@ -50,7 +50,12 @@ impl Inspection {
 /// Skill dirs missing from disk or with unreadable SKILL.md are
 /// reported as `None` name — the installer refuses them; the report
 /// shows the reviewer why.
-pub fn inspect_pack(pack_dir: &Path, source_kind: &str, source_url: Option<&str>, pin: &str) -> Result<Inspection, String> {
+pub fn inspect_pack(
+    pack_dir: &Path,
+    source_kind: &str,
+    source_url: Option<&str>,
+    pin: &str,
+) -> Result<Inspection, String> {
     let manifest = CrabManifest::load(&pack_dir.join("crab.toml"))?;
 
     let mut files = Vec::new();
@@ -148,7 +153,11 @@ path = "skills/competitor-watch"
         )
         .unwrap();
         std::fs::create_dir_all(dir.join("skills/competitor-watch/scripts")).unwrap();
-        std::fs::write(dir.join("skills/competitor-watch/scripts/diff.sh"), "#!/bin/sh\ndiff old new\n").unwrap();
+        std::fs::write(
+            dir.join("skills/competitor-watch/scripts/diff.sh"),
+            "#!/bin/sh\ndiff old new\n",
+        )
+        .unwrap();
         dir
     }
 
@@ -171,7 +180,11 @@ path = "skills/competitor-watch"
     #[test]
     fn secret_hits_make_it_unclean() {
         let dir = fixture_pack();
-        std::fs::write(dir.join("skills/competitor-watch/scripts/diff.sh"), "TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n").unwrap();
+        std::fs::write(
+            dir.join("skills/competitor-watch/scripts/diff.sh"),
+            "TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n",
+        )
+        .unwrap();
         let report = inspect_pack(&dir, "local", None, "pin").unwrap();
         assert!(!report.clean());
         assert_eq!(report.secret_hits[0].pattern, "github-token");

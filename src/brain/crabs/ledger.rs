@@ -29,11 +29,17 @@ pub struct CrabSource {
 
 impl CrabSource {
     pub fn git(url: impl Into<String>) -> Self {
-        Self { kind: "git".into(), url: Some(url.into()) }
+        Self {
+            kind: "git".into(),
+            url: Some(url.into()),
+        }
     }
 
     pub fn local(path: impl Into<String>) -> Self {
-        Self { kind: "local".into(), url: Some(path.into()) }
+        Self {
+            kind: "local".into(),
+            url: Some(path.into()),
+        }
     }
 }
 
@@ -117,7 +123,10 @@ pub fn upsert(records: &mut Vec<CrabRecord>, rec: CrabRecord) {
 /// Drop `crab`'s record, returning it (so callers can print what was
 /// removed) or `None` when it wasn't installed.
 pub fn remove(records: &mut Vec<CrabRecord>, crab: &str) -> Option<CrabRecord> {
-    records.iter().position(|r| r.crab == crab).map(|i| records.remove(i))
+    records
+        .iter()
+        .position(|r| r.crab == crab)
+        .map(|i| records.remove(i))
 }
 
 #[cfg(test)]
@@ -173,8 +182,16 @@ mod tests {
 
     #[test]
     fn remove_returns_the_record() {
-        let mut records = vec![sample(), CrabRecord::new(
-            "morning-paper", "0.1.0", "sha", CrabSource::local("/tmp/x"), vec![])];
+        let mut records = vec![
+            sample(),
+            CrabRecord::new(
+                "morning-paper",
+                "0.1.0",
+                "sha",
+                CrabSource::local("/tmp/x"),
+                vec![],
+            ),
+        ];
         let gone = remove(&mut records, "morning-paper").unwrap();
         assert_eq!(gone.crab, "morning-paper");
         assert_eq!(records.len(), 1);

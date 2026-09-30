@@ -27,6 +27,10 @@ pub struct MarketEntry {
     pub category: Option<String>,
     /// Repo the crab lives in (install source).
     pub repo: String,
+    /// Subdir within the repo when the crab isn't at the root (market
+    /// monorepo: `crabs/<name>`). Install as `<repo>#<path>`.
+    #[serde(default)]
+    pub path: Option<String>,
     /// The commit this version was published at (drift reference).
     #[serde(default)]
     pub pin: Option<String>,
@@ -41,7 +45,8 @@ struct MarketIndex {
 
 /// Parse an `index.toml` blob (top-level `[[crabs]]` array-of-tables).
 pub fn parse_index(raw: &str) -> Result<Vec<MarketEntry>, String> {
-    let entries: MarketIndex = toml::from_str(raw).map_err(|e| format!("market index parse failed: {e}"))?;
+    let entries: MarketIndex =
+        toml::from_str(raw).map_err(|e| format!("market index parse failed: {e}"))?;
     Ok(entries.crabs)
 }
 
@@ -55,13 +60,28 @@ pub async fn fetch_index(index_url: &str) -> Result<Vec<MarketEntry>, String> {
         .await
         .map_err(|e| format!("market index fetch failed ({index_url}): {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("market index fetch failed ({index_url}): HTTP {}", resp.status()));
+        return Err(format!(
+            "market index fetch failed ({index_url}): HTTP {}",
+            resp.status()
+        ));
     }
     let raw = resp
         .text()
         .await
         .map_err(|e| format!("market index read failed: {e}"))?;
     parse_index(&raw)
+}
+
+/// Load an index from a URL or a local file path. URLs go through
+/// [`fetch_index`]; anything else is read from disk — private markets,
+/// offline development, mirrors.
+pub async fn load_index(src: &str) -> Result<Vec<MarketEntry>, String> {
+    if src.starts_with("http://") || src.starts_with("https://") {
+        fetch_index(src).await
+    } else {
+        let raw = std::fs::read_to_string(src).map_err(|e| format!("read index {src}: {e}"))?;
+        parse_index(&raw)
+    }
 }
 
 /// Substring search over name + description (case-insensitive).
@@ -105,7 +125,7 @@ pub struct UpdateReport {
 /// market sources compare against the index pin.
 pub async fn check_updates(home: &Path, index_url: &str) -> Vec<UpdateReport> {
     let records = ledger::load(home).unwrap_or_default();
-    let market = fetch_index(index_url).await.ok().unwrap_or_default();
+    let market = load_index(index_url).await.ok().unwrap_or_default();
     let mut report = Vec::new();
     for rec in &records {
         let status = status_for(rec, &market).await;
@@ -125,7 +145,9 @@ async fn status_for(rec: &CrabRecord, market: &[MarketEntry]) -> UpdateStatus {
             return if *pin == rec.pin {
                 UpdateStatus::UpToDate
             } else {
-                UpdateStatus::Drift { current: pin.clone() }
+                UpdateStatus::Drift {
+                    current: pin.clone(),
+                }
             };
         }
     }
@@ -166,8 +188,10 @@ async fn status_for(rec: &CrabRecord, market: &[MarketEntry]) -> UpdateStatus {
 
 /// Remote HEAD sha via `git ls-remote <url> HEAD` — no clone.
 fn remote_head(url: &str) -> Result<String, String> {
+    // Ledger urls may carry a #subdir fragment (market monorepo) — ls-remote wants the bare repo.
+    let repo = url.split('#').next().unwrap_or(url);
     let out = std::process::Command::new("git")
-        .args(["ls-remote", url, "HEAD"])
+        .args(["ls-remote", repo, "HEAD"])
         .output()
         .map_err(|e| format!("git ls-remote failed: {e}"))?;
     if !out.status.success() {
@@ -177,11 +201,7 @@ fn remote_head(url: &str) -> Result<String, String> {
         ));
     }
     let line = String::from_utf8_lossy(&out.stdout);
-    let sha = line
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let sha = line.split_whitespace().next().unwrap_or("").to_string();
     if sha.len() < 7 {
         return Err("git ls-remote returned no sha".into());
     }
@@ -199,6 +219,7 @@ mod tests {
             description: format!("desc for {name}"),
             category: Some("monitor".into()),
             repo: "https://github.com/moneyacademyKE/crab-market".into(),
+            path: None,
             pin: pin.map(str::to_string),
         }
     }
@@ -233,6 +254,27 @@ pin = "abc123"
     }
 
     #[tokio::test]
+    async fn load_index_reads_local_file() {
+        let dir = std::env::temp_dir().join(format!("crab-idx-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("index.toml");
+        std::fs::write(
+            &path,
+            "[[crabs]]\nname = \"a\"\nversion = \"0.1.0\"\ndescription = \"d\"\nrepo = \"r\"\n",
+        )
+        .unwrap();
+        let entries = load_index(path.to_str().unwrap()).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "a");
+        // missing file → clean error, no panic
+        assert!(
+            load_index(dir.join("nope.toml").to_str().unwrap())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn update_status_uses_market_pin_first() {
         let home = std::env::temp_dir().join(format!("crab-market-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
@@ -248,7 +290,9 @@ pin = "abc123"
         let status = status_for(&rec, &market).await;
         assert_eq!(
             status,
-            UpdateStatus::Drift { current: "newpin".into() }
+            UpdateStatus::Drift {
+                current: "newpin".into()
+            }
         );
         let up_to_date = vec![entry("competitor-watch", "0.1.0", Some("oldpin"))];
         assert_eq!(status_for(&rec, &up_to_date).await, UpdateStatus::UpToDate);
@@ -267,7 +311,9 @@ pin = "abc123"
             &std::fs::read_to_string(pack.join("crab.toml")).unwrap(),
         );
         let rec = CrabRecord::new(
-            "a", "0.1.0", &pin,
+            "a",
+            "0.1.0",
+            &pin,
             super::super::ledger::CrabSource::local(pack.to_string_lossy().into_owned()),
             vec![],
         );
@@ -278,6 +324,9 @@ pin = "abc123"
             "name = \"a\"\nversion = \"0.2.0\"\ndescription = \"x\"\n\n[[skills]]\npath = \"skills/a\"\n",
         )
         .unwrap();
-        assert!(matches!(status_for(&rec, &[]).await, UpdateStatus::Drift { .. }));
+        assert!(matches!(
+            status_for(&rec, &[]).await,
+            UpdateStatus::Drift { .. }
+        ));
     }
 }
