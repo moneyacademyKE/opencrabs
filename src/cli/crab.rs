@@ -6,7 +6,7 @@
 //! 3 = secrets, 4 = collision/drift. List and remove are ledger reads.
 
 use super::args::CrabCommands;
-use crate::brain::crabs::{self, inspect::Inspection, CrabOrigin, InstallOpts};
+use crate::brain::crabs::{self, CrabOrigin, InstallOpts, inspect::Inspection};
 use crate::config::opencrabs_home;
 use anyhow::Result;
 
@@ -18,20 +18,33 @@ fn parse_origin(source: &str, pin: Option<&str>) -> CrabOrigin {
         || source.starts_with("http://")
         || source.ends_with(".git");
     if looks_like_url {
-        CrabOrigin::Git { url: source.to_string(), pin: pin.map(str::to_string) }
+        CrabOrigin::Git {
+            url: source.to_string(),
+            pin: pin.map(str::to_string),
+        }
     } else {
-        CrabOrigin::Local { path: std::path::PathBuf::from(source) }
+        CrabOrigin::Local {
+            path: std::path::PathBuf::from(source),
+        }
     }
 }
 
-pub(crate) async fn cmd_crab(_config: &crate::config::Config, operation: CrabCommands) -> Result<()> {
+pub(crate) async fn cmd_crab(
+    _config: &crate::config::Config,
+    operation: CrabCommands,
+) -> Result<()> {
     let home = opencrabs_home();
     match operation {
         CrabCommands::Inspect { source, pin } => {
             let origin = parse_origin(&source, pin.as_deref());
             let pack = crabs::install::resolve(&origin).unwrap_or_exit();
-            let report = crabs::inspect::inspect_pack(&pack.dir, &pack.source.kind, pack.source.url.as_deref(), &pack.pin)
-                .unwrap_or_exit();
+            let report = crabs::inspect::inspect_pack(
+                &pack.dir,
+                &pack.source.kind,
+                pack.source.url.as_deref(),
+                &pack.pin,
+            )
+            .unwrap_or_exit();
             let rendered = render_inspection(&report);
             println!("{rendered}");
             let report_dir = home.join("state").join("crab-inspections");
@@ -41,24 +54,50 @@ pub(crate) async fn cmd_crab(_config: &crate::config::Config, operation: CrabCom
             println!("[report] {}", path.display());
             Ok(())
         }
-        CrabCommands::Install { source, pin, yes, force } => {
+        CrabCommands::Install {
+            source,
+            pin,
+            yes,
+            force,
+        } => {
             let origin = parse_origin(&source, pin.as_deref());
             let pack = crabs::install::resolve(&origin).unwrap_or_exit();
-            let report = crabs::inspect::inspect_pack(&pack.dir, &pack.source.kind, pack.source.url.as_deref(), &pack.pin)
-                .unwrap_or_exit();
+            let report = crabs::inspect::inspect_pack(
+                &pack.dir,
+                &pack.source.kind,
+                pack.source.url.as_deref(),
+                &pack.pin,
+            )
+            .unwrap_or_exit();
             println!("{}", render_inspection(&report));
             if !report.clean() {
                 // hard stop even before the prompt: the installer would
                 // refuse anyway; print the exact same reason.
-                crabs::install::install(&home, &pack, &InstallOpts { force, ..Default::default() })
-                    .unwrap_or_exit();
+                crabs::install::install(
+                    &home,
+                    &pack,
+                    &InstallOpts {
+                        force,
+                        ..Default::default()
+                    },
+                )
+                .unwrap_or_exit();
             }
             if !yes && !confirm(&report) {
-                println!("[crab] install declined — nothing written. Re-run with --yes to confirm.");
+                println!(
+                    "[crab] install declined — nothing written. Re-run with --yes to confirm."
+                );
                 return Ok(());
             }
-            let record = crabs::install::install(&home, &pack, &InstallOpts { force, ..Default::default() })
-                .unwrap_or_exit();
+            let record = crabs::install::install(
+                &home,
+                &pack,
+                &InstallOpts {
+                    force,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_exit();
             println!(
                 "[crab] installed {} v{} @ {} — {} file(s), skills: {}",
                 record.crab,
@@ -76,7 +115,10 @@ pub(crate) async fn cmd_crab(_config: &crate::config::Config, operation: CrabCom
                 println!("no crabs installed — try `opencrabs crab inspect <source>`");
                 return Ok(());
             }
-            println!("{:<24} {:<10} {:<13} {:<12} SOURCE", "CRAB", "VERSION", "PIN", "INSTALLED");
+            println!(
+                "{:<24} {:<10} {:<13} {:<12} SOURCE",
+                "CRAB", "VERSION", "PIN", "INSTALLED"
+            );
             for r in &records {
                 let url = r.source.url.clone().unwrap_or_default();
                 println!(
@@ -93,13 +135,16 @@ pub(crate) async fn cmd_crab(_config: &crate::config::Config, operation: CrabCom
         }
         CrabCommands::Search { query, index } => {
             let url = index.as_deref().unwrap_or(crabs::DEFAULT_MARKET_INDEX);
-            let entries = crabs::market::fetch_index(url).await.unwrap_or_exit();
+            let entries = crabs::market::load_index(url).await.unwrap_or_exit();
             let hits = crabs::market::search(&entries, &query);
             if hits.is_empty() {
                 println!("no market entries match \"{query}\" — {url}");
                 return Ok(());
             }
-            println!("{:<24} {:<10} {:<10} {}", "CRAB", "VERSION", "CATEGORY", "DESCRIPTION");
+            println!(
+                "{:<24} {:<10} {:<10} {}",
+                "CRAB", "VERSION", "CATEGORY", "DESCRIPTION"
+            );
             for e in &hits {
                 println!(
                     "{:<24} {:<10} {:<10} {}",
@@ -109,7 +154,13 @@ pub(crate) async fn cmd_crab(_config: &crate::config::Config, operation: CrabCom
                     e.description
                 );
             }
-            println!("\ninstall with: opencrabs crab inspect {} → crab install", hits[0].repo);
+            let first = &hits[0];
+            let src = match &first.path {
+                Some(p) => format!("{}#{}", first.repo, p),
+                None => first.repo.clone(),
+            };
+            println!("\ninstall with: opencrabs crab inspect {src}");
+            println!("              opencrabs crab install {src} --yes   (after review)");
             Ok(())
         }
         CrabCommands::Updates { index } => {
@@ -141,13 +192,22 @@ pub(crate) async fn cmd_crab(_config: &crate::config::Config, operation: CrabCom
             }
             println!(
                 "\nreport only — nothing was applied.{}",
-                if drift > 0 { format!(" {drift} crab(s) drifted.") } else { " all current.".into() }
+                if drift > 0 {
+                    format!(" {drift} crab(s) drifted.")
+                } else {
+                    " all current.".into()
+                }
             );
             Ok(())
         }
         CrabCommands::Remove { name } => {
             let record = crabs::install::remove(&home, &name).unwrap_or_exit();
-            println!("[crab] removed {} v{} — {} file(s) deleted", record.crab, record.version, record.files.len());
+            println!(
+                "[crab] removed {} v{} — {} file(s) deleted",
+                record.crab,
+                record.version,
+                record.files.len()
+            );
             for f in &record.files {
                 println!("  - {f}");
             }
@@ -162,9 +222,7 @@ fn confirm(report: &Inspection) -> bool {
     use std::io::{BufRead, Write};
     print!(
         "\ninstall {} v{} ({})? [y/N] ",
-        report.manifest.name,
-        report.manifest.version,
-        report.source_kind
+        report.manifest.name, report.manifest.version, report.source_kind
     );
     let _ = std::io::stdout().flush();
     let mut line = String::new();
@@ -194,11 +252,17 @@ fn render_inspection(r: &Inspection) -> String {
         out.push_str(&format!(
             "- **{}** — {} ({} file(s))\n",
             s.path,
-            s.description.clone().unwrap_or_else(|| "⚠ frontmatter unreadable".into()),
+            s.description
+                .clone()
+                .unwrap_or_else(|| "⚠ frontmatter unreadable".into()),
             s.file_count
         ));
         if !s.blast.is_empty() {
-            let b: Vec<String> = s.blast.iter().map(|(f, t)| format!("{}: {}", f, t.join(","))).collect();
+            let b: Vec<String> = s
+                .blast
+                .iter()
+                .map(|(f, t)| format!("{}: {}", f, t.join(",")))
+                .collect();
             out.push_str(&format!("  - blast: {}\n", b.join(" · ")));
         }
     }

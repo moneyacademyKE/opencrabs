@@ -38,16 +38,39 @@ static SECRET_PATTERNS: &[(&str, &str)] = &[
 static RADAR: &[(&str, &[&str])] = &[
     (
         "network",
-        &["http_request", "web_scrape", "exa_search", "web_search", "browser_navigate", "browser_click", "a2a_send"],
+        &[
+            "http_request",
+            "web_scrape",
+            "exa_search",
+            "web_search",
+            "browser_navigate",
+            "browser_click",
+            "a2a_send",
+        ],
     ),
-    ("shell", &["bash", "spawn_agent", "execute_code", "subprocess"]),
+    (
+        "shell",
+        &["bash", "spawn_agent", "execute_code", "subprocess"],
+    ),
     (
         "channel-out",
-        &["telegram_send", "discord_send", "slack_send", "whatsapp_send", "trello_send"],
+        &[
+            "telegram_send",
+            "discord_send",
+            "slack_send",
+            "whatsapp_send",
+            "trello_send",
+        ],
     ),
-    ("github-write", &["gh pr", "gh issue", "gh release", "git push"]),
+    (
+        "github-write",
+        &["gh pr", "gh issue", "gh release", "git push"],
+    ),
     ("schedule", &["cron_manage", "schedule"]),
-    ("destructive", &["rm -rf", "git reset", "git checkout --", " trash "]),
+    (
+        "destructive",
+        &["rm -rf", "git reset", "git checkout --", " trash "],
+    ),
 ];
 
 fn secret_regexes() -> &'static Vec<(&'static str, Regex)> {
@@ -67,15 +90,23 @@ pub fn secret_scan(pack_dir: &Path, files: &[String]) -> Vec<SecretHit> {
     let mut hits = Vec::new();
     for rel in files {
         let full = pack_dir.join(rel);
-        let Ok(raw) = std::fs::read(&full) else { continue };
+        let Ok(raw) = std::fs::read(&full) else {
+            continue;
+        };
         if raw.contains(&0u8) || raw.len() > 8 * 1024 * 1024 {
             continue; // binary or oversized — not a text secret surface
         }
-        let Ok(text) = String::from_utf8(raw) else { continue };
+        let Ok(text) = String::from_utf8(raw) else {
+            continue;
+        };
         for (label, re) in secret_regexes() {
             for line in text.lines().enumerate() {
                 if re.is_match(line.1) {
-                    hits.push(SecretHit { file: rel.clone(), line: line.0 + 1, pattern: label });
+                    hits.push(SecretHit {
+                        file: rel.clone(),
+                        line: line.0 + 1,
+                        pattern: label,
+                    });
                 }
             }
         }
@@ -89,8 +120,16 @@ pub fn blast_radius(skill_body: &str) -> Vec<(&'static str, Vec<&'static str>)> 
     RADAR
         .iter()
         .filter_map(|(family, tokens)| {
-            let hits: Vec<&str> = tokens.iter().copied().filter(|t| skill_body.contains(t)).collect();
-            if hits.is_empty() { None } else { Some((*family, hits)) }
+            let hits: Vec<&str> = tokens
+                .iter()
+                .copied()
+                .filter(|t| skill_body.contains(t))
+                .collect();
+            if hits.is_empty() {
+                None
+            } else {
+                Some((*family, hits))
+            }
         })
         .collect()
 }
@@ -105,18 +144,20 @@ mod tests {
         std::fs::create_dir_all(dir.join("skills/a")).unwrap();
         let cases = [
             ("openai-key", "key = \"sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234\""),
-            ("github-token", "token: ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
-            ("private-key", "-----BEGIN RSA PRIVATE KEY-----"),
             (
-                "generic-secret",
-                "api_key: 'supersecretvalue123'",
+                "github-token",
+                "token: ghp_0123456789abcdefghijklmnopqrstuvwxyz",
             ),
+            ("private-key", "-----BEGIN RSA PRIVATE KEY-----"),
+            ("generic-secret", "api_key: 'supersecretvalue123'"),
         ];
         for (i, (_, line)) in cases.iter().enumerate() {
             let f = format!("skills/a/file{i}.txt");
             std::fs::write(dir.join(&f), line).unwrap();
         }
-        let files: Vec<String> = (0..cases.len()).map(|i| format!("skills/a/file{i}.txt")).collect();
+        let files: Vec<String> = (0..cases.len())
+            .map(|i| format!("skills/a/file{i}.txt"))
+            .collect();
         let hits = secret_scan(&dir, &files);
         let labels: Vec<&str> = hits.iter().map(|h| h.pattern).collect();
         for (want, _) in &cases {
@@ -128,7 +169,11 @@ mod tests {
     fn secret_scan_clean_text_passes() {
         let dir = std::env::temp_dir().join(format!("crab-scan-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("skills/a")).unwrap();
-        std::fs::write(dir.join("skills/a/SKILL.md"), "---\nname: a\ndescription: normal text\n---\nbody").unwrap();
+        std::fs::write(
+            dir.join("skills/a/SKILL.md"),
+            "---\nname: a\ndescription: normal text\n---\nbody",
+        )
+        .unwrap();
         assert!(secret_scan(&dir, &["skills/a/SKILL.md".into()]).is_empty());
     }
 
@@ -136,13 +181,18 @@ mod tests {
     fn secret_scan_skips_binary() {
         let dir = std::env::temp_dir().join(format!("crab-scan-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("skills/a")).unwrap();
-        std::fs::write(dir.join("skills/a/img.png"), [0x89, 0x50, 0x4E, 0x47, 0x00, 0x0D]).unwrap();
+        std::fs::write(
+            dir.join("skills/a/img.png"),
+            [0x89, 0x50, 0x4E, 0x47, 0x00, 0x0D],
+        )
+        .unwrap();
         assert!(secret_scan(&dir, &["skills/a/img.png".into()]).is_empty());
     }
 
     #[test]
     fn blast_radius_maps_families() {
-        let body = "use bash to run cron_manage, then telegram_send the result; git push at the end";
+        let body =
+            "use bash to run cron_manage, then telegram_send the result; git push at the end";
         let b = blast_radius(body);
         let families: Vec<&str> = b.iter().map(|(f, _)| *f).collect();
         assert!(families.contains(&"shell"));

@@ -69,7 +69,10 @@ impl CrabManifest {
         if self.name.is_empty() {
             return Err("crab.toml: 'name' is required".into());
         }
-        if !self.name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        if !self
+            .name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
             || self.name.starts_with('-')
             || self.name.ends_with('-')
         {
@@ -112,10 +115,15 @@ fn validate_skill_path(path: &str) -> Result<(), String> {
         return Err("crab.toml: empty [[skills]] path".into());
     }
     if Path::new(p).is_absolute() {
-        return Err(format!("crab.toml: skill path must be relative, got \"{path}\""));
+        return Err(format!(
+            "crab.toml: skill path must be relative, got \"{path}\""
+        ));
     }
     let parts: Vec<&str> = p.split('/').collect();
-    if parts.iter().any(|c| c.is_empty() || *c == ".." || *c == ".") {
+    if parts
+        .iter()
+        .any(|c| c.is_empty() || *c == ".." || *c == ".")
+    {
         return Err(format!(
             "crab.toml: malformed skill path \"{path}\" (empty or '.'/'..' components)"
         ));
@@ -168,11 +176,26 @@ path = "skills/competitor-watch"
     #[test]
     fn rejects_invalid_manifests() {
         for (raw, why) in [
-            ("version = \"1\"\ndescription = \"x\"\n[[skills]]\npath = \"skills/a\"\n", "missing name"),
-            ("name = \"Bad Name\"\nversion = \"1\"\ndescription = \"x\"\n[[skills]]\npath = \"skills/a\"\n", "uppercase name"),
-            ("name = \"a\"\ndescription = \"x\"\n[[skills]]\npath = \"skills/a\"\n", "missing version"),
-            ("name = \"a\"\nversion = \"1\"\n[[skills]]\npath = \"skills/a\"\n", "missing description"),
-            ("name = \"a\"\nversion = \"1\"\ndescription = \"x\"\n", "no skills"),
+            (
+                "version = \"1\"\ndescription = \"x\"\n[[skills]]\npath = \"skills/a\"\n",
+                "missing name",
+            ),
+            (
+                "name = \"Bad Name\"\nversion = \"1\"\ndescription = \"x\"\n[[skills]]\npath = \"skills/a\"\n",
+                "uppercase name",
+            ),
+            (
+                "name = \"a\"\ndescription = \"x\"\n[[skills]]\npath = \"skills/a\"\n",
+                "missing version",
+            ),
+            (
+                "name = \"a\"\nversion = \"1\"\n[[skills]]\npath = \"skills/a\"\n",
+                "missing description",
+            ),
+            (
+                "name = \"a\"\nversion = \"1\"\ndescription = \"x\"\n",
+                "no skills",
+            ),
             (
                 "name = \"a\"\nversion = \"1\"\ndescription = \"x\"\n[[skills]]\npath = \"scripts/a\"\n",
                 "skill not under skills/",
@@ -190,7 +213,10 @@ path = "skills/competitor-watch"
             let err = CrabManifest::parse_str(raw)
                 .err()
                 .unwrap_or_else(|| panic!("should reject: {why}"));
-            assert!(err.contains("crab.toml"), "error should name the file: {err}");
+            assert!(
+                err.contains("crab.toml"),
+                "error should name the file: {err}"
+            );
         }
     }
 

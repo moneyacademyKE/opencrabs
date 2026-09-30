@@ -95,9 +95,17 @@ impl std::fmt::Display for InstallError {
 pub fn resolve(origin: &CrabOrigin) -> Result<ResolvedPack, InstallError> {
     match origin {
         CrabOrigin::Git { url, pin } => {
+            // <repo-url>#<subdir> — the pack lives in a subdir of the repo
+            // (market monorepo layout: crabs/<name>/ inside the index repo).
+            let (repo, subdir) = match url.split_once('#') {
+                Some((r, s)) if !s.is_empty() => {
+                    (r.to_string(), Some(s.trim_start_matches('/').to_string()))
+                }
+                _ => (url.clone(), None),
+            };
             let tmp = std::env::temp_dir().join(format!("crab-src-{}", uuid::Uuid::new_v4()));
             let out = std::process::Command::new("git")
-                .args(["clone", "--depth", "50", url, &tmp.to_string_lossy()])
+                .args(["clone", "--depth", "50", &repo, &tmp.to_string_lossy()])
                 .output()
                 .map_err(|e| InstallError::Failed(format!("git clone failed: {e}")))?;
             if !out.status.success() {
@@ -123,14 +131,36 @@ pub fn resolve(origin: &CrabOrigin) -> Result<ResolvedPack, InstallError> {
                 .output()
                 .map_err(|e| InstallError::Failed(format!("git rev-parse failed: {e}")))?;
             if !head.status.success() {
-                return Err(InstallError::Failed("cannot resolve HEAD after clone".into()));
+                return Err(InstallError::Failed(
+                    "cannot resolve HEAD after clone".into(),
+                ));
             }
             let sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
-            Ok(ResolvedPack { dir: tmp, source: CrabSource::git(url.clone()), pin: sha })
+            let dir = match &subdir {
+                Some(s) => {
+                    let d = tmp.join(s);
+                    if !d.is_dir() {
+                        return Err(InstallError::Failed(format!(
+                            "subdir {s} not found in {repo} @ {}",
+                            &sha[..sha.len().min(7)]
+                        )));
+                    }
+                    d
+                }
+                None => tmp,
+            };
+            Ok(ResolvedPack {
+                dir,
+                source: CrabSource::git(url.clone()),
+                pin: sha,
+            })
         }
         CrabOrigin::Local { path } => {
             if !path.is_dir() {
-                return Err(InstallError::NotFound(format!("pack dir not found: {}", path.display())));
+                return Err(InstallError::NotFound(format!(
+                    "pack dir not found: {}",
+                    path.display()
+                )));
             }
             let manifest_raw = std::fs::read_to_string(path.join("crab.toml"))
                 .map_err(|_| InstallError::Failed(format!("no crab.toml at {}", path.display())))?;
@@ -173,8 +203,7 @@ pub fn install(
     pack: &ResolvedPack,
     opts: &InstallOpts,
 ) -> Result<CrabRecord, InstallError> {
-    let manifest = CrabManifest::load(&pack.dir.join("crab.toml"))
-        .map_err(InstallError::Failed)?;
+    let manifest = CrabManifest::load(&pack.dir.join("crab.toml")).map_err(InstallError::Failed)?;
 
     // Disk validity: every declared skill dir must exist with SKILL.md.
     let mut payload: Vec<String> = Vec::new();
@@ -243,8 +272,7 @@ pub fn install(
             std::fs::create_dir_all(parent)
                 .map_err(|e| InstallError::Io(format!("mkdir {}: {e}", parent.display())))?;
         }
-        std::fs::copy(&src, &tgt)
-            .map_err(|e| InstallError::Io(format!("copy {rel}: {e}")))?;
+        std::fs::copy(&src, &tgt).map_err(|e| InstallError::Io(format!("copy {rel}: {e}")))?;
         written.push(rel.clone());
     }
 
@@ -267,7 +295,9 @@ pub fn install(
 pub fn remove(home: &Path, crab: &str) -> Result<CrabRecord, InstallError> {
     let mut records = ledger::load(home).map_err(|e| InstallError::Io(e.to_string()))?;
     let Some(record) = ledger::remove(&mut records, crab) else {
-        return Err(InstallError::NotFound(format!("crab '{crab}' is not installed")));
+        return Err(InstallError::NotFound(format!(
+            "crab '{crab}' is not installed"
+        )));
     };
     for rel in &record.files {
         let path = home.join(rel);
@@ -298,7 +328,9 @@ fn prune_empty_dirs(stop: &Path, mut dir: Option<&Path>) {
         if d == stop {
             break;
         }
-        let empty = std::fs::read_dir(d).map(|mut it| it.next().is_none()).unwrap_or(false);
+        let empty = std::fs::read_dir(d)
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(false);
         if !empty || std::fs::remove_dir(d).is_err() {
             break;
         }
@@ -341,12 +373,19 @@ mod tests {
             "name = \"a\"\nversion = \"0.1.0\"\ndescription = \"x\"\n\n[[skills]]\npath = \"skills/a\"\n",
         )
         .unwrap();
-        std::fs::write(d.join("skills/a/SKILL.md"), "---\nname: a\ndescription: x\n---\nbody").unwrap();
+        std::fs::write(
+            d.join("skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\nbody",
+        )
+        .unwrap();
         d
     }
 
     fn resolved(pack: &Path) -> ResolvedPack {
-        resolve(&CrabOrigin::Local { path: pack.to_path_buf() }).unwrap()
+        resolve(&CrabOrigin::Local {
+            path: pack.to_path_buf(),
+        })
+        .unwrap()
     }
 
     #[test]
@@ -380,7 +419,10 @@ mod tests {
         assert_eq!(err.exit_code(), 4);
         assert!(matches!(err, InstallError::Collision(_)));
         // untouched
-        assert_eq!(std::fs::read_to_string(home.join("skills/a/SKILL.md")).unwrap(), "user-edited content");
+        assert_eq!(
+            std::fs::read_to_string(home.join("skills/a/SKILL.md")).unwrap(),
+            "user-edited content"
+        );
     }
 
     #[test]
@@ -389,9 +431,21 @@ mod tests {
         let home = temp_dir("crab-home");
         std::fs::create_dir_all(home.join("skills/a")).unwrap();
         std::fs::write(home.join("skills/a/SKILL.md"), "user-edited content").unwrap();
-        let record = install(&home, &resolved(&pack), &InstallOpts { force: true, ..Default::default() }).unwrap();
+        let record = install(
+            &home,
+            &resolved(&pack),
+            &InstallOpts {
+                force: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(record.files.len(), 1);
-        assert!(std::fs::read_to_string(home.join("skills/a/SKILL.md")).unwrap().contains("name: a"));
+        assert!(
+            std::fs::read_to_string(home.join("skills/a/SKILL.md"))
+                .unwrap()
+                .contains("name: a")
+        );
     }
 
     #[test]
@@ -408,7 +462,15 @@ mod tests {
         let err = install(&home, &resolved(&pack), &InstallOpts::default()).unwrap_err();
         assert_eq!(err.exit_code(), 4);
         assert!(matches!(err, InstallError::Drift(_)));
-        install(&home, &resolved(&pack), &InstallOpts { force: true, ..Default::default() }).unwrap();
+        install(
+            &home,
+            &resolved(&pack),
+            &InstallOpts {
+                force: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let ledger = ledger::load(&home).unwrap();
         assert_eq!(ledger[0].version, "0.2.0");
     }
@@ -416,7 +478,11 @@ mod tests {
     #[test]
     fn secret_payload_hard_stops_before_writes() {
         let pack = fixture_pack();
-        std::fs::write(pack.join("skills/a/leak.txt"), "token = \"sk-ABCDEFGHIJKLMNOPQRST1234\"").unwrap();
+        std::fs::write(
+            pack.join("skills/a/leak.txt"),
+            "token = \"sk-ABCDEFGHIJKLMNOPQRST1234\"",
+        )
+        .unwrap();
         let home = temp_dir("crab-home");
         let err = install(&home, &resolved(&pack), &InstallOpts::default()).unwrap_err();
         assert_eq!(err.exit_code(), 3);

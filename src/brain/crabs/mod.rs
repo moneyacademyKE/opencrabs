@@ -42,4 +42,4 @@ pub mod scan;
 pub use install::{CrabOrigin, InstallError, InstallOpts, ResolvedPack};
 pub use ledger::{CrabRecord, CrabSource};
 pub use manifest::CrabManifest;
-pub use market::{MarketEntry, UpdateReport, UpdateStatus, DEFAULT_MARKET_INDEX};
+pub use market::{DEFAULT_MARKET_INDEX, MarketEntry, UpdateReport, UpdateStatus};
