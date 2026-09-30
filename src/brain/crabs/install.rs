@@ -228,14 +228,16 @@ pub fn install(
 
     // Drift gate: ledger pin for this crab vs the pack we're holding.
     let records = ledger::load(home).map_err(|e| InstallError::Io(e.to_string()))?;
-    if let Some(prior) = records.iter().find(|r| r.crab == manifest.name) {
-        if prior.pin != pack.pin && !opts.force {
-            return Err(InstallError::Drift(format!(
-                "upstream changed since install ({} ≠ {}) — re-inspect, then --force to re-approve",
-                &prior.pin[..12.min(prior.pin.len())],
-                &pack.pin[..12.min(pack.pin.len())],
-            )));
-        }
+    if let Some(prior) = records
+        .iter()
+        .find(|r| r.crab == manifest.name)
+        .filter(|r| r.pin != pack.pin && !opts.force)
+    {
+        return Err(InstallError::Drift(format!(
+            "upstream changed since install ({} ≠ {}) — re-inspect, then --force to re-approve",
+            &prior.pin[..12.min(prior.pin.len())],
+            &pack.pin[..12.min(pack.pin.len())],
+        )));
     }
 
     // Secret hard stop — before any write.
