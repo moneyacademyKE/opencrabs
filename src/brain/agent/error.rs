@@ -151,11 +151,25 @@ pub fn format_user_error(err: &AgentError) -> String {
                     .to_string();
             }
             401 | 403 => {
-                return format!(
-                    "Authentication failed on the active provider \
-                     ({status}). Check your API key in `/onboard:provider` \
-                     or `keys.toml`."
-                );
+                // 401 is a key problem. 403 usually is NOT — providers
+                // return it for retired/re-tiered models too, and sending
+                // the user to fix a perfectly good key sends them in
+                // circles (seen live: infer's cx/gpt-6-sol delisted, key
+                // fine, every prompt 403'd).
+                if status == 403 {
+                    return format!(
+                        "Provider returned 403 on the active model. 403 usually \
+                         means the model itself is unavailable — retired, \
+                         re-tiered, or not in your plan — not a bad key. Switch \
+                         model via `/models` (or the client's model picker) and \
+                         retry; only if every model 403s, check your API key in \
+                         `keys.toml`."
+                    );
+                }
+                return "Authentication failed on the active provider (401). \
+                        Check your API key in `keys.toml`; provider and model \
+                        switching lives in `/models`."
+                    .to_string();
             }
             _ => {
                 // #1007: if a fallback chain walked and died, the ledger is

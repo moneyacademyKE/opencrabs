@@ -83,19 +83,35 @@ fn maps_429_to_rate_limit_message() {
 }
 
 #[test]
-fn maps_401_and_403_to_auth_failure() {
-    for code in [401, 403] {
-        let err = provider_err(&format!("API error ({code}): forbidden"));
-        let msg = format_user_error(&err);
-        assert!(
-            msg.contains("Authentication") || msg.contains("API key"),
-            "{code} must mention auth / API key: {msg}"
-        );
-        assert!(
-            msg.contains("/onboard:provider") || msg.contains("keys.toml"),
-            "{code} must point the user at where to fix the key: {msg}"
-        );
-    }
+fn maps_401_to_key_advice() {
+    let err = provider_err("API error (401): unauthorized");
+    let msg = format_user_error(&err);
+    assert!(
+        msg.contains("Authentication") && msg.contains("keys.toml"),
+        "401 is a key problem and must say where the key lives: {msg}"
+    );
+    assert!(
+        msg.contains("/models"),
+        "provider/model switching pointer: {msg}"
+    );
+}
+
+#[test]
+fn maps_403_to_dead_model_first_not_key_blame() {
+    let err = provider_err("API error (403): forbidden");
+    let msg = format_user_error(&err);
+    assert!(
+        msg.contains("/models"),
+        "403 must point at model switching first: {msg}"
+    );
+    assert!(
+        msg.to_lowercase().contains("model"),
+        "403 must name the model-availability cause: {msg}"
+    );
+    assert!(
+        msg.contains("keys.toml"),
+        "key check stays as the last resort: {msg}"
+    );
 }
 
 #[test]
