@@ -7,27 +7,52 @@
 //! config/keys the wizard writes. Routed from `slash_command` via the
 //! `/onboard:<step>` prefix.
 //!
-//! `provider` is intentionally absent — `/models` already covers it on
-//! channels. `brain` and the brain-directory change stay TUI-only.
+//! `provider` has no headless form either — `/models` IS the provider picker
+//! on chat clients, so dispatch says exactly that. `workspace` and `daemon`
+//! answer with desktop-app guidance instead of a dead Unknown-step error.
 
 use super::error::Result;
 use super::r#trait::ToolResult;
 use crate::config::Config;
 
-/// Route `/onboard:<sub>` to the matching handler.
+/// The steps that fully work from a chat/ACP client. Bare `/onboard` prints
+/// this; the interactive steps stay desktop-app territory.
+const ONBOARD_MENU: &str = "Onboarding — steps that work right here:\n\
+    • `/onboard:channels` — connect Telegram/Discord/WhatsApp.\n\
+    • `/onboard:voice` — speech-to-text / text-to-speech setup.\n\
+    • `/onboard:image` — vision + image generation setup.\n\
+    • `/models` — provider/model setup (the provider step, same picker).\n\
+    Workspace, daemon, brain and the full wizard are desktop-app screens.";
+
+/// Route `/onboard:<sub>` (and bare `/onboard`) to the matching handler.
 pub(crate) fn dispatch(sub: &str, args: &str) -> Result<ToolResult> {
     match sub.trim().to_lowercase().as_str() {
+        "" => Ok(ToolResult::success(ONBOARD_MENU.into())),
         "image" => onboard_image(args),
         "voice" => onboard_voice(args),
         "channels" => onboard_channels(args),
+        "provider" => Ok(ToolResult::success(
+            "Provider setup runs through /models — on chat and ACP clients it IS the \
+             provider step: it lists providers, switches the model, and writes the \
+             choice to config. In a desktop client like MonoCode, the UI's model picker \
+             drives the same config. `/onboard:provider` has nothing extra to run."
+                .into(),
+        )),
         "brain" => Ok(ToolResult::success(
             "Brain/persona setup edits multiple markdown files and is TUI-only \
              (type /onboard:brain in the desktop app). To tweak persona text from \
              here, read/edit the brain files via the brain tools."
                 .into(),
         )),
+        "workspace" | "daemon" => Ok(ToolResult::success(
+            "Workspace and daemon setup are interactive desktop-app screens — nothing to \
+             configure from a chat client. The rest works here: /onboard:channels, \
+             /onboard:voice, /onboard:image, and /models for providers."
+                .into(),
+        )),
         other => Ok(ToolResult::error(format!(
-            "Unknown onboarding step '{other}'. Available on channels: image, voice, channels."
+            "Unknown onboarding step '{other}'. Steps that work from chat: image, voice, \
+             channels; provider → /models; workspace, daemon, brain → desktop app."
         ))),
     }
 }

@@ -115,3 +115,55 @@ fn channels_whatsapp_points_at_qr_pairing() {
     assert!(r.success);
     assert!(r.output.to_lowercase().contains("qr"));
 }
+
+// --- Round-10 guidance arms: every /onboard:<step> a client can type gets an
+// honest answer, and bare /onboard shows the headless menu. ---
+
+#[test]
+fn provider_step_names_models() {
+    let r = dispatch("provider", "").unwrap();
+    assert!(r.success);
+    assert!(r.output.contains("/models"), "{}", r.output);
+    assert!(r.output.to_lowercase().contains("provider"));
+}
+
+#[test]
+fn bare_onboard_menu_lists_headless_steps() {
+    let r = dispatch("", "").unwrap();
+    assert!(r.success, "bare /onboard is a menu now, not an error");
+    let out = r.output;
+    assert!(out.contains("channels"), "{out}");
+    assert!(out.contains("voice"), "{out}");
+    assert!(out.contains("image"), "{out}");
+    assert!(out.contains("/models"), "{out}");
+}
+
+#[test]
+fn workspace_and_daemon_point_to_the_desktop_app() {
+    for step in ["workspace", "daemon"] {
+        let r = dispatch(step, "").unwrap();
+        assert!(r.success, "{step} is guidance, not an error");
+        let out = r.output;
+        let lower = out.to_lowercase();
+        assert!(
+            lower.contains("desktop"),
+            "{step}: {out}"
+        );
+    }
+}
+
+#[test]
+fn uppercase_and_whitespace_steps_still_route() {
+    let r = dispatch("  Provider  ", "").unwrap();
+    assert!(r.success);
+    assert!(r.output.contains("/models"), "{}", r.output);
+}
+
+#[test]
+fn unknown_step_message_names_the_guidance_arms() {
+    let r = dispatch("frobnicate", "").unwrap();
+    assert!(!r.success);
+    let err = r.error.unwrap();
+    assert!(err.contains("image, voice, channels"), "{err}");
+    assert!(err.contains("/models"), "{err}");
+}
