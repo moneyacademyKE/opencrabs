@@ -15,8 +15,10 @@
 //! - [`server`]: method dispatch and the ACP-session state map.
 //! - [`catalog`]: the live model catalog advertised in `session/new`.
 //! - [`turn`]: the prompt bridge — tool-loop events/approvals -> ACP frames.
+//! - [`onboard`]: the headless `/onboard` intercept.
 
 pub mod catalog;
+pub mod onboard;
 pub mod protocol;
 pub mod server;
 pub mod transport;
