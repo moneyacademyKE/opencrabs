@@ -157,14 +157,13 @@ pub fn format_user_error(err: &AgentError) -> String {
                 // circles (seen live: infer's cx/gpt-6-sol delisted, key
                 // fine, every prompt 403'd).
                 if status == 403 {
-                    return format!(
-                        "Provider returned 403 on the active model. 403 usually \
-                         means the model itself is unavailable — retired, \
-                         re-tiered, or not in your plan — not a bad key. Switch \
-                         model via `/models` (or the client's model picker) and \
-                         retry; only if every model 403s, check your API key in \
-                         `keys.toml`."
-                    );
+                    return "Provider returned 403 on the active model. 403 usually \
+                           means the model itself is unavailable — retired, \
+                           re-tiered, or not in your plan — not a bad key. Switch \
+                           model via `/models` (or the client's model picker) and \
+                           retry; only if every model 403s, check your API key in \
+                           `keys.toml`."
+                        .to_string();
                 }
                 return "Authentication failed on the active provider (401). \
                         Check your API key in `keys.toml`; provider and model \

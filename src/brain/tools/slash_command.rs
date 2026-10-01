@@ -390,7 +390,7 @@ impl Tool for SlashCommandTool {
             // + /models pointers) — the same dispatch chat channels use, so
             // ACP clients get a real answer instead of a TUI-only stub. The
             // `/onboard:<step>` shapes were already peeled off above (#889).
-            c if c == "/onboard" => super::slash_onboard::dispatch("", args),
+            "/onboard" => super::slash_onboard::dispatch("", args),
             "/whisper" => Ok(ToolResult::success(
                 "WhisperCrabs is a TUI-triggered command. Tell the user to type /whisper \
                  in the input box to launch the floating voice-to-text tool."
