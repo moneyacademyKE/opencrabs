@@ -421,7 +421,7 @@ impl AcpServer {
         // feed them to the LLM, which burned minutes and a permission dialog
         // to say what a static menu says instantly. Answers out-of-band (no
         // in-flight claim) so it works even while a turn is running.
-        if let Some(reply) = Self::onboard_reply(&text) {
+        if let Some(reply) = super::onboard::reply(&text) {
             state.handle.send(protocol::session_update(
                 &st.id.to_string(),
                 protocol::text_chunk("agent_message_chunk", &reply),
@@ -447,27 +447,6 @@ impl AcpServer {
         *guard = Some(cancel.clone());
         drop(guard);
         tokio::spawn(turn::run_turn(state, st, id, text, cancel));
-    }
-
-    /// Match `/onboard` and `/onboard:<step>` prompts and dispatch them to
-    /// the same handlers chat channels use. Returns the reply text, or None
-    /// when the prompt is not onboarding and should run as a normal turn.
-    pub(crate) fn onboard_reply(text: &str) -> Option<String> {
-        let text = text.trim();
-        let (head, args) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
-        let step = if head == "/onboard" {
-            ""
-        } else {
-            head.strip_prefix("/onboard:")?
-        };
-        let result = crate::brain::tools::slash_onboard::dispatch(step, args).ok()?;
-        Some(if result.success {
-            result.output
-        } else {
-            result
-                .error
-                .unwrap_or_else(|| "Onboarding dispatch failed.".into())
-        })
     }
     /// `session/compact`: drive the loop's own manual-compaction path — the
     /// `[SYSTEM: Compact context now.]` marker the TUI and channels use. The

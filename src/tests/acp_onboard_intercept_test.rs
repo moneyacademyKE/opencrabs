@@ -5,10 +5,10 @@
 //! their no-write paths here (menus/help text only; config writes are
 //! exercised manually, like the channel tests).
 
-use crate::acp::server::AcpServer;
+use crate::acp::onboard;
 
 fn reply(text: &str) -> Option<String> {
-    AcpServer::onboard_reply(text)
+    onboard::reply(text)
 }
 
 #[test]
