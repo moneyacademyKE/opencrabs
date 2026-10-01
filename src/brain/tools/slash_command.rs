@@ -387,14 +387,11 @@ impl Tool for SlashCommandTool {
             )),
             "/goal" => self.handle_goal(args, context).await,
             "/profiles" => self.handle_profiles(context).await,
-            // Bare `/onboard` and an empty `/onboard:`; the step spellings are
-            // routed above (#889, #1981).
-            c if c == "/onboard" || c.starts_with("/onboard:") => Ok(ToolResult::success(
-                "Onboarding wizard is a TUI-only interactive screen. \
-                 However, you can read and modify all settings via config_manager \
-                 (read_config, write_config) and manage API keys directly."
-                    .into(),
-            )),
+            // Bare `/onboard` lands on the headless menu (channels/voice/image
+            // + /models pointers) — the same dispatch chat channels use, so
+            // ACP clients get a real answer instead of a TUI-only stub. The
+            // `/onboard:<step>` shapes were already peeled off above (#889).
+            c if c == "/onboard" || c.starts_with("/onboard:") => super::slash_onboard::dispatch("", args),
             "/whisper" => Ok(ToolResult::success(
                 "WhisperCrabs is a TUI-triggered command. Tell the user to type /whisper \
                  in the input box to launch the floating voice-to-text tool."
@@ -586,7 +583,7 @@ impl SlashCommandTool {
              /goal     — Set/view/pause/clear session goal\n\
              /profiles — List/switch/create/manage profiles\n\
              /whisper  — Voice-to-text (TUI only)\n\
-             /onboard  — Setup wizard (TUI only, use config_manager for programmatic changes)\n\
+             /onboard  — Setup: /onboard:channels, :voice, :image and /models work headless\n\
              /channels — Channel setup from chat (args: telegram|discord|whatsapp ...)\n\
              /voice    — Voice STT/TTS setup from chat (args: stt|tts ...)\n\
              /image    — Vision + image generation setup from chat\n\
