@@ -27,6 +27,7 @@ pub mod a2a_session_notify_test;
 pub mod a2a_transport_cause_test;
 pub mod a2a_types_test;
 pub mod acp_catalog_test;
+pub mod acp_onboard_intercept_test;
 pub mod acp_plan_tool_name_1815_test;
 pub mod acp_protocol_test;
 pub mod acp_replay_test;
