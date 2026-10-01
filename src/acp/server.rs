@@ -426,7 +426,9 @@ impl AcpServer {
                 &st.id.to_string(),
                 protocol::text_chunk("agent_message_chunk", &reply),
             ));
-            state.handle.respond(id, json!({ "stopReason": "end_turn" }));
+            state
+                .handle
+                .respond(id, json!({ "stopReason": "end_turn" }));
             return;
         }
         // Claim the in-flight slot under the same lock that checks it: the

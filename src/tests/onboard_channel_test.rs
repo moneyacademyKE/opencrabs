@@ -145,10 +145,7 @@ fn workspace_and_daemon_point_to_the_desktop_app() {
         assert!(r.success, "{step} is guidance, not an error");
         let out = r.output;
         let lower = out.to_lowercase();
-        assert!(
-            lower.contains("desktop"),
-            "{step}: {out}"
-        );
+        assert!(lower.contains("desktop"), "{step}: {out}");
     }
 }
 
