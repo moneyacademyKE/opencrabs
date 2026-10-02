@@ -340,7 +340,8 @@ fn progress_callback(
                 }
                 // A successful spawn starts a status-file watch so the child's
                 // detached activity reaches the client's delegation panel.
-                if tool_name == "spawn_agent" && success
+                if tool_name == "spawn_agent"
+                    && success
                     && let Some(agent_id) = spawned_agent_id(&summary)
                 {
                     watches.register(agent_id, call_id.clone());
