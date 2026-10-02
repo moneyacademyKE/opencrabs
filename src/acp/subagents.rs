@@ -100,12 +100,13 @@ impl SpawnWatches {
         self.notify.notify_one();
     }
 
-    /// True when every registered watch reached a terminal state (or none
-    /// were ever registered).
+    /// True when every registered watch reached a terminal state. An empty
+    /// registry is NOT done: the poller must survive until the turn's first
+    /// spawn registers (the first tick fires before any tool has run).
     fn all_done(&self) -> bool {
         self.watches
             .lock()
-            .map(|watches| watches.iter().all(|(_, w)| w.done))
+            .map(|watches| !watches.is_empty() && watches.iter().all(|(_, w)| w.done))
             .unwrap_or(true)
     }
 
