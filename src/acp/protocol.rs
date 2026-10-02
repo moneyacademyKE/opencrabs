@@ -299,6 +299,44 @@ pub fn tool_kind(tool_name: &str) -> &'static str {
     }
 }
 
+/// Content blocks for a tool_call update: the text summary first, then a
+/// `resource_link` for every image path the output references that exists on
+/// disk. Image-producing tools (charts, screenshots, generated art) render
+/// inline in the client instead of as prose about a file.
+pub fn content_blocks(summary: &str) -> Value {
+    let mut blocks = vec![json!({ "type": "text", "text": summary })];
+    for uri in image_links(summary) {
+        let name = uri.rsplit('/').next().unwrap_or("image");
+        blocks.push(json!({
+            "type": "resource_link",
+            "uri": uri,
+            "name": name,
+        }));
+    }
+    Value::Array(blocks)
+}
+
+/// Absolute `file://` URIs for image paths mentioned in `summary` that exist
+/// on disk. Tokens are whitespace/quote-delimited; the scan is capped so a
+/// pathological summary cannot stall the update path.
+fn image_links(summary: &str) -> Vec<String> {
+    const IMAGE_EXTS: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
+    summary
+        .split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+        .filter_map(|tok| {
+            let path = tok.trim_end_matches(|c: char| !c.is_alphanumeric());
+            let ext = path.rsplit('.').next()?;
+            if !IMAGE_EXTS.contains(&ext) || !path.starts_with('/') {
+                return None;
+            }
+            std::path::Path::new(path)
+                .is_file()
+                .then(|| format!("file://{path}"))
+        })
+        .take(8)
+        .collect()
+}
+
 /// Permission modes advertised in `session/new` and accepted by
 /// `session/set_mode`. The ids mirror MonoCode's runtime modes so the client
 /// mapping is identity; `plan` is the read-only intent.

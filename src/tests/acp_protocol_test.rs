@@ -7,13 +7,48 @@
 //! production module.
 
 use crate::acp::protocol::{
-    AcpMode, ClientMessage, SESSION_SET_MODE, SESSION_SET_MODEL, initialize_result, modes_payload,
-    parse_line, permission_outcome, prompt_text, replay_updates, tool_kind,
+    AcpMode, ClientMessage, SESSION_SET_MODE, SESSION_SET_MODEL, content_blocks,
+    initialize_result, modes_payload, parse_line, permission_outcome, prompt_text, replay_updates,
+    tool_kind,
 };
 use crate::db::models::Message;
 use chrono::Utc;
 use serde_json::json;
+use std::path::PathBuf;
 use uuid::Uuid;
+
+/// A real temp .png so the exists-on-disk filter has something to find.
+struct TempImage(PathBuf);
+
+impl TempImage {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "acp-content-blocks-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"png").expect("write temp image");
+        Self(path)
+    }
+
+    fn uri(&self) -> String {
+        format!("file://{}", self.0.display())
+    }
+}
+
+impl Drop for TempImage {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn resource_links(blocks: &serde_json::Value) -> Vec<&serde_json::Value> {
+    blocks
+        .as_array()
+        .expect("content is an array")
+        .iter()
+        .filter(|b| b["type"] == "resource_link")
+        .collect()
+}
 
 #[test]
 fn parses_request() {
@@ -214,4 +249,57 @@ fn initialize_advertises_auth_methods() {
         v.get("authMethods").and_then(|a| a.as_array()).is_some(),
         "authMethods is optional per the ACP v1 schema (required is only protocolVersion); we emit it explicitly so clients and registry validators that expect the field present do not depend on the schema default"
     );
+}
+
+#[test]
+fn a_disk_backed_image_path_becomes_a_resource_link() {
+    let img = TempImage::new("shot.png");
+    let summary = format!("Chart rendered to {}", img.0.display());
+    let blocks = content_blocks(&summary);
+
+    let found = resource_links(&blocks);
+    assert_eq!(found.len(), 1, "one image in, one link out: {blocks}");
+    assert_eq!(found[0]["uri"], img.uri());
+    assert_eq!(found[0]["name"], img.0.file_name().unwrap().to_string_lossy().to_string());
+}
+
+#[test]
+fn the_text_summary_always_leads_the_blocks() {
+    let blocks = content_blocks("wrote 3 files");
+    let arr = blocks.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["type"], "text");
+    assert_eq!(arr[0]["text"], "wrote 3 files");
+}
+
+#[test]
+fn a_mentioned_but_missing_image_stays_prose() {
+    let summary = "Chart rendered to /nonexistent/nope-9x.png";
+    assert!(resource_links(&content_blocks(summary)).is_empty());
+}
+
+#[test]
+fn non_image_and_relative_paths_never_link() {
+    let txt = TempImage::new("notes.txt");
+    let summary = format!("saved {} and out/relative.png", txt.0.display());
+    assert!(resource_links(&content_blocks(&summary)).is_empty());
+}
+
+#[test]
+fn trailing_punctuation_does_not_break_the_path() {
+    let img = TempImage::new("plot.png");
+    let summary = format!("Done: {}.", img.0.display());
+    let blocks = content_blocks(&summary);
+    let found = resource_links(&blocks);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0]["uri"], img.uri());
+}
+
+#[test]
+fn multiple_images_produce_multiple_links() {
+    let a = TempImage::new("a.png");
+    let b = TempImage::new("b.jpg");
+    let summary = format!("{} and {}", a.0.display(), b.0.display());
+    let blocks = content_blocks(&summary);
+    assert_eq!(resource_links(&blocks).len(), 2);
 }

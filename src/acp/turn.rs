@@ -314,6 +314,7 @@ fn progress_callback(
                     "toolCallId": call_id,
                     "status": if success { "completed" } else { "failed" },
                     "rawOutput": summary,
+                    "content": protocol::content_blocks(&summary),
                 }))
             }
             ProgressEvent::TokenCount(used) => Some(json!({
