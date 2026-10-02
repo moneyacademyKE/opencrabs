@@ -399,6 +399,8 @@ pub(crate) fn tool_call_frame_titled(
 /// The `tool_call_update` frame closing a tool call, same identity fields as
 /// the start frame so a client can pair them without re-deriving the tool
 /// (#1815 F6). `status` is a v1 `ToolCallStatus`: `completed` or `failed`.
+/// `content` carries structured blocks (e.g. `resource_link` for image tool
+/// outputs) so renderer-side clients can draw files they cannot stat.
 pub(crate) fn tool_call_update_frame(
     call_id: &str,
     tool_name: &str,
@@ -411,6 +413,7 @@ pub(crate) fn tool_call_update_frame(
         "name": tool_name,
         "status": if success { "completed" } else { "failed" },
         "rawOutput": summary,
+        "content": protocol::content_blocks(summary),
     })
 }
 
