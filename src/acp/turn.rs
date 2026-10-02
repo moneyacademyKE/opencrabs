@@ -284,8 +284,8 @@ fn progress_callback(
                 let call_id = pairing.consume_for_start(&tool_name);
                 // Delegation renders as an agent card upstream: the title
                 // prefix is the classification contract (subagents.rs).
-                let title = delegation_title(&tool_name, &tool_input)
-                    .unwrap_or_else(|| tool_name.clone());
+                let title =
+                    delegation_title(&tool_name, &tool_input).unwrap_or_else(|| tool_name.clone());
                 Some(json!({
                     "sessionUpdate": "tool_call",
                     "toolCallId": call_id,
@@ -304,7 +304,8 @@ fn progress_callback(
                 let call_id = pairing.complete(&tool_name);
                 // A successful spawn starts a status-file watch so the child's
                 // detached activity reaches the client's delegation panel.
-                if tool_name == "spawn_agent" && success
+                if tool_name == "spawn_agent"
+                    && success
                     && let Some(agent_id) = spawned_agent_id(&summary)
                 {
                     watches.register(agent_id, call_id.clone());

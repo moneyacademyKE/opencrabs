@@ -216,8 +216,9 @@ pub(crate) async fn run_spawn_watches(
             let Some(status) = WorkStatus::read(&agent_id) else {
                 continue; // not written yet — the next tick re-reads
             };
-            let updates =
-                watches.with_updates(&agent_id, |watch| child_step_updates(&agent_id, watch, &status));
+            let updates = watches.with_updates(&agent_id, |watch| {
+                child_step_updates(&agent_id, watch, &status)
+            });
             for update in updates.into_iter().flatten() {
                 handle.send(session_update(&acp_session_id, update));
             }
