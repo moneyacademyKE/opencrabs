@@ -29,6 +29,7 @@ pub mod acp_catalog_test;
 pub mod acp_onboard_intercept_test;
 pub mod acp_protocol_test;
 pub mod acp_replay_test;
+pub mod acp_subagents_test;
 pub mod acp_transport_test;
 pub mod acp_turn_test;
 pub mod active_skill_tracking_test;

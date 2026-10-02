@@ -25,6 +25,7 @@ use crate::brain::provider::StopReason;
 
 use super::protocol::{self, permission_options, permission_outcome, session_update, text_chunk};
 use super::server::{ServerState, SessionState};
+use super::subagents::{SpawnWatches, delegation_title, run_spawn_watches, spawned_agent_id};
 use super::transport::TransportHandle;
 
 /// Run one turn to completion and answer the `session/prompt` request.
@@ -43,11 +44,22 @@ pub async fn run_turn(
     // pre-mints the id its tool call will adopt, so the ask and the gated
     // tool render as one transcript entry instead of two.
     let pairing = Arc::new(CallIdPairing::new());
+    // Delegation surface: each spawned sub-agent is watched through its
+    // status file and re-emitted as stamped child steps (see subagents.rs).
+    let watches = Arc::new(SpawnWatches::new());
+    let poll_cancel = cancel.child_token();
+    let watcher = tokio::spawn(run_spawn_watches(
+        state.handle.clone(),
+        acp_session_id.clone(),
+        watches.clone(),
+        poll_cancel.clone(),
+    ));
     let progress = progress_callback(
         state.handle.clone(),
         acp_session_id.clone(),
         state.agent.clone(),
         pairing.clone(),
+        watches.clone(),
     );
     let mode = *session.mode.lock().await;
     let approval = approval_callback(
@@ -75,6 +87,10 @@ pub async fn run_turn(
         .await;
 
     *session.active_cancel.lock().await = None;
+
+    // The watcher never outlives the turn that spawned it.
+    poll_cancel.cancel();
+    let _ = watcher.await;
 
     match result {
         Ok(response) => {
@@ -219,6 +235,7 @@ fn progress_callback(
     acp_session_id: String,
     agent: Arc<crate::brain::agent::AgentService>,
     pairing: Arc<CallIdPairing>,
+    watches: Arc<SpawnWatches>,
 ) -> ProgressCallback {
     // Text streamed since the last round boundary. The loop emits live
     // deltas via `StreamingChunk` and then the round's full text again via
@@ -265,10 +282,14 @@ fn progress_callback(
                     buf.clear();
                 }
                 let call_id = pairing.consume_for_start(&tool_name);
+                // Delegation renders as an agent card upstream: the title
+                // prefix is the classification contract (subagents.rs).
+                let title = delegation_title(&tool_name, &tool_input)
+                    .unwrap_or_else(|| tool_name.clone());
                 Some(json!({
                     "sessionUpdate": "tool_call",
                     "toolCallId": call_id,
-                    "title": tool_name,
+                    "title": title,
                     "kind": protocol::tool_kind(&tool_name),
                     "status": "in_progress",
                     "rawInput": tool_input,
@@ -281,6 +302,13 @@ fn progress_callback(
                 ..
             } => {
                 let call_id = pairing.complete(&tool_name);
+                // A successful spawn starts a status-file watch so the child's
+                // detached activity reaches the client's delegation panel.
+                if tool_name == "spawn_agent" && success
+                    && let Some(agent_id) = spawned_agent_id(&summary)
+                {
+                    watches.register(agent_id, call_id.clone());
+                }
                 Some(json!({
                     "sessionUpdate": "tool_call_update",
                     "toolCallId": call_id,
@@ -351,11 +379,13 @@ fn approval_callback(
             // (clients merge blocks by toolCallId).
             let tool_name = info.tool_name.clone();
             let call_id = pairing.mint_for_ask(&tool_name);
+            let ask_title =
+                delegation_title(&tool_name, &info.tool_input).unwrap_or_else(|| tool_name.clone());
             let params = json!({
                 "sessionId": acp_session_id,
                 "toolCall": {
                     "toolCallId": call_id,
-                    "title": tool_name.clone(),
+                    "title": ask_title,
                     "kind": kind,
                     "rawInput": info.tool_input,
                 },
