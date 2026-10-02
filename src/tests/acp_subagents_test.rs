@@ -4,9 +4,7 @@
 use serde_json::json;
 
 use crate::acp::subagents::{SpawnWatch, child_step_updates, delegation_title, spawned_agent_id};
-use crate::brain::agent::service::work_status::{
-    ProgressSnapshot, WorkState, WorkStatus,
-};
+use crate::brain::agent::service::work_status::{ProgressSnapshot, WorkState, WorkStatus};
 
 fn watch() -> SpawnWatch {
     SpawnWatch::new("spawn-call-id".to_string())
@@ -44,7 +42,10 @@ fn spawn_summary_yields_the_agent_id() {
 
 #[test]
 fn non_spawn_or_malformed_summaries_yield_nothing() {
-    assert_eq!(spawned_agent_id("Spawned sub-agent 'x' with id: nothex"), None);
+    assert_eq!(
+        spawned_agent_id("Spawned sub-agent 'x' with id: nothex"),
+        None
+    );
     assert_eq!(spawned_agent_id("error: provider down"), None);
 }
 
@@ -67,14 +68,21 @@ fn spawn_titles_classify_as_agent_cards_upstream() {
 #[test]
 fn first_progress_becomes_one_stamped_child_step() {
     let mut w = watch();
-    let updates = child_step_updates("abc123de", &mut w, &status(WorkState::Running, 1, Some("bash")));
+    let updates = child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Running, 1, Some("bash")),
+    );
     assert_eq!(updates.len(), 1);
     let step = &updates[0];
     assert_eq!(step["sessionUpdate"], "tool_call");
     assert_eq!(step["toolCallId"], "abc123de-i1");
     assert_eq!(step["title"], "bash");
     assert_eq!(step["kind"], "execute");
-    assert_eq!(parent_of(step), &json!({ "parentToolCallId": "spawn-call-id" }));
+    assert_eq!(
+        parent_of(step),
+        &json!({ "parentToolCallId": "spawn-call-id" })
+    );
 }
 
 #[test]
@@ -88,8 +96,16 @@ fn an_unchanged_status_emits_nothing() {
 #[test]
 fn a_new_iteration_completes_the_previous_child_step() {
     let mut w = watch();
-    child_step_updates("abc123de", &mut w, &status(WorkState::Running, 1, Some("bash")));
-    let updates = child_step_updates("abc123de", &mut w, &status(WorkState::Running, 2, Some("grep")));
+    child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Running, 1, Some("bash")),
+    );
+    let updates = child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Running, 2, Some("grep")),
+    );
     assert_eq!(updates.len(), 2);
     assert_eq!(updates[0]["sessionUpdate"], "tool_call_update");
     assert_eq!(updates[0]["toolCallId"], "abc123de-i1");
@@ -101,26 +117,56 @@ fn a_new_iteration_completes_the_previous_child_step() {
 #[test]
 fn terminal_state_closes_the_watch_with_a_final_status() {
     let mut w = watch();
-    child_step_updates("abc123de", &mut w, &status(WorkState::Running, 3, Some("bash")));
-    let updates = child_step_updates("abc123de", &mut w, &status(WorkState::Completed, 3, Some("bash")));
+    child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Running, 3, Some("bash")),
+    );
+    let updates = child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Completed, 3, Some("bash")),
+    );
     assert_eq!(updates.len(), 1);
     assert_eq!(updates[0]["sessionUpdate"], "tool_call_update");
     assert_eq!(updates[0]["status"], "completed");
     // Closed: further reads emit nothing.
-    assert!(child_step_updates("abc123de", &mut w, &status(WorkState::Completed, 3, Some("bash"))).is_empty());
+    assert!(
+        child_step_updates(
+            "abc123de",
+            &mut w,
+            &status(WorkState::Completed, 3, Some("bash"))
+        )
+        .is_empty()
+    );
 }
 
 #[test]
 fn failed_and_interrupted_children_close_as_failed() {
     let mut w = watch();
-    child_step_updates("abc123de", &mut w, &status(WorkState::Running, 1, Some("bash")));
-    let updates = child_step_updates("abc123de", &mut w, &status(WorkState::Failed, 1, Some("bash")));
+    child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Running, 1, Some("bash")),
+    );
+    let updates = child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Failed, 1, Some("bash")),
+    );
     assert_eq!(updates[0]["status"], "failed");
 
     let mut w = watch();
-    child_step_updates("abc123de", &mut w, &status(WorkState::Running, 1, Some("bash")));
-    let updates =
-        child_step_updates("abc123de", &mut w, &status(WorkState::Interrupted, 1, Some("bash")));
+    child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Running, 1, Some("bash")),
+    );
+    let updates = child_step_updates(
+        "abc123de",
+        &mut w,
+        &status(WorkState::Interrupted, 1, Some("bash")),
+    );
     assert_eq!(updates[0]["status"], "failed");
 }
 
