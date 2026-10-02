@@ -9,8 +9,8 @@
 use crate::acp::protocol::{
     AcpMode, ClientMessage, EXTENSION_METHODS, SESSION_COMPACT, SESSION_COMPACT_LEGACY,
     SESSION_SET_MODE, SESSION_SET_MODEL, SESSION_SET_MODEL_LEGACY, SESSION_STEER_LEGACY,
-    content_blocks, initialize_result, modes_payload, parse_line, permission_outcome, prompt_text,
-    replay_updates, session_response, tool_kind,
+    content_blocks, initialize_result, modes_payload, parse_line, permission_outcome,
+    plan_update_from_json, prompt_text, replay_updates, session_response, tool_kind,
 };
 use crate::db::models::Message;
 use chrono::Utc;
@@ -23,10 +23,8 @@ struct TempImage(PathBuf);
 
 impl TempImage {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "acp-content-blocks-{}-{name}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("acp-content-blocks-{}-{name}", std::process::id()));
         std::fs::write(&path, b"png").expect("write temp image");
         Self(path)
     }
@@ -350,7 +348,10 @@ fn a_disk_backed_image_path_becomes_a_resource_link() {
     let found = resource_links(&blocks);
     assert_eq!(found.len(), 1, "one image in, one link out: {blocks}");
     assert_eq!(found[0]["uri"], img.uri());
-    assert_eq!(found[0]["name"], img.0.file_name().unwrap().to_string_lossy().to_string());
+    assert_eq!(
+        found[0]["name"],
+        img.0.file_name().unwrap().to_string_lossy().to_string()
+    );
 }
 
 #[test]
@@ -392,4 +393,66 @@ fn multiple_images_produce_multiple_links() {
     let summary = format!("{} and {}", a.0.display(), b.0.display());
     let blocks = content_blocks(&summary);
     assert_eq!(resource_links(&blocks).len(), 2);
+}
+
+#[test]
+fn plan_update_maps_real_on_disk_status_serialization() {
+    // The plan JSON serializes TaskStatus in PascalCase (plain derive) —
+    // the mapper must speak the file's actual dialect, not a hoped-for one.
+    let doc = json!({
+        "title": "Round 12",
+        "tasks": [
+            { "title": "research", "status": "Completed" },
+            { "title": "server edits", "status": "InProgress" },
+            { "title": "ship", "status": "Pending" },
+            { "title": "old idea", "status": "Skipped" },
+            { "title": "broken bit", "status": "Failed" }
+        ]
+    });
+    let update = plan_update_from_json(&doc).expect("tasks exist");
+    assert_eq!(update["sessionUpdate"], json!("plan"));
+    let statuses: Vec<&str> = update["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            "completed",
+            "in_progress",
+            "pending",
+            "completed",
+            "pending"
+        ]
+    );
+    assert_eq!(update["entries"][0]["content"], json!("research"));
+    assert_eq!(update["entries"][0]["kind"], json!("task"));
+}
+
+#[test]
+fn plan_update_is_none_without_tasks() {
+    assert!(plan_update_from_json(&json!({"title": "empty"})).is_none());
+    assert!(plan_update_from_json(&json!({"tasks": []})).is_none());
+    assert!(plan_update_from_json(&json!({"tasks": [{"status": "Pending"}]})).is_none());
+    assert!(plan_update_from_json(&json!(null)).is_none());
+}
+
+#[test]
+fn plan_update_tolerates_missing_and_snake_case_status() {
+    let doc = json!({
+        "tasks": [
+            { "title": "no status field" },
+            { "title": "snake case", "status": "in_progress" }
+        ]
+    });
+    let update = plan_update_from_json(&doc).unwrap();
+    let statuses: Vec<&str> = update["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(statuses, vec!["pending", "in_progress"]);
 }
