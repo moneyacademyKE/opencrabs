@@ -154,10 +154,9 @@ impl AgentService {
             .await
             .map_err(AgentError::db)?;
 
-        // Build base LLM request. The output reservation is bounded by this
-        // session's active context window so a 200K route keeps input headroom.
+        // Build base LLM request
         let request = LLMRequest::new(model_name.clone(), context.messages.clone())
-            .with_max_tokens(self.request_max_tokens_for_session(session_id));
+            .with_max_tokens(self.max_tokens);
 
         // Surface a small "Recently accessed" anchor section so the
         // agent re-uses real paths from prior sessions / pre-compaction
@@ -362,7 +361,7 @@ impl AgentService {
             context.max_tokens,
             context.usage_percentage(),
             model_name.to_string(),
-            self.request_max_tokens_for_session(session_id),
+            self.max_tokens,
             self.get_working_directory_for_session(session_id),
             self.auto_approve_tools,
             cancel,
