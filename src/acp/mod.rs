@@ -15,12 +15,15 @@
 //! - [`server`]: method dispatch and the ACP-session state map.
 //! - [`catalog`]: the live model catalog advertised in `session/new`.
 //! - [`turn`]: the prompt bridge — tool-loop events/approvals -> ACP frames.
+//! - [`subagents`]: delegation surface — spawn calls classify as agent cards
+//!   and detached child activity is re-emitted as stamped steps.
 //! - [`onboard`]: the headless `/onboard` intercept.
 
 pub mod catalog;
 pub mod onboard;
 pub mod protocol;
 pub mod server;
+pub mod subagents;
 pub mod transport;
 pub mod turn;
 

@@ -25,6 +25,7 @@ use crate::brain::provider::StopReason;
 
 use super::protocol::{self, permission_options, permission_outcome, session_update, text_chunk};
 use super::server::{ServerState, SessionState};
+use super::subagents::{SpawnWatches, delegation_title, run_spawn_watches, spawned_agent_id};
 use super::transport::TransportHandle;
 
 /// Run one turn to completion and answer the `session/prompt` request.
@@ -43,11 +44,22 @@ pub async fn run_turn(
     // pre-mints the id its tool call will adopt, so the ask and the gated
     // tool render as one transcript entry instead of two.
     let pairing = Arc::new(CallIdPairing::new());
+    // Delegation surface: each spawned sub-agent is watched through its
+    // status file and re-emitted as stamped child steps (see subagents.rs).
+    let watches = Arc::new(SpawnWatches::new());
+    let poll_cancel = cancel.child_token();
+    let watcher = tokio::spawn(run_spawn_watches(
+        state.handle.clone(),
+        acp_session_id.clone(),
+        watches.clone(),
+        poll_cancel.clone(),
+    ));
     let progress = progress_callback(
         state.handle.clone(),
         acp_session_id.clone(),
         state.agent.clone(),
         pairing.clone(),
+        watches.clone(),
     );
     let mode = *session.mode.lock().await;
     let approval = approval_callback(
@@ -75,6 +87,10 @@ pub async fn run_turn(
         .await;
 
     *session.active_cancel.lock().await = None;
+
+    // The watcher never outlives the turn that spawned it.
+    poll_cancel.cancel();
+    let _ = watcher.await;
 
     match result {
         Ok(response) => {
@@ -227,6 +243,7 @@ fn progress_callback(
     acp_session_id: String,
     agent: Arc<crate::brain::agent::AgentService>,
     pairing: Arc<CallIdPairing>,
+    watches: Arc<SpawnWatches>,
 ) -> ProgressCallback {
     // Text streamed since the last round boundary. The loop emits live
     // deltas via `StreamingChunk` and then the round's full text again via
@@ -279,7 +296,13 @@ fn progress_callback(
                     buf.clear();
                 }
                 let call_id = pairing.consume_for_start(&tool_name);
-                Some(tool_call_frame(&call_id, &tool_name, &tool_input))
+                // Delegation renders as an agent card upstream: the title
+                // prefix is the classification contract (subagents.rs).
+                let title = delegation_title(&tool_name, &tool_input);
+                match title {
+                    Some(t) => Some(tool_call_frame_titled(&call_id, &t, &tool_name, &tool_input)),
+                    None => Some(tool_call_frame(&call_id, &tool_name, &tool_input)),
+                }
             }
             ProgressEvent::ToolCompleted {
                 tool_name,
@@ -315,6 +338,13 @@ fn progress_callback(
                         handle.send(session_update(&acp_id, protocol::plan_update(entries)));
                     });
                 }
+                // A successful spawn starts a status-file watch so the child's
+                // detached activity reaches the client's delegation panel.
+                if tool_name == "spawn_agent" && success
+                    && let Some(agent_id) = spawned_agent_id(&summary)
+                {
+                    watches.register(agent_id, call_id.clone());
+                }
                 Some(tool_call_update_frame(
                     &call_id, &tool_name, success, &summary,
                 ))
@@ -343,10 +373,22 @@ fn progress_callback(
 /// the tool. Sending only the title left clients matching a card to a tool
 /// guessing from display text.
 pub(crate) fn tool_call_frame(call_id: &str, tool_name: &str, tool_input: &Value) -> Value {
+    tool_call_frame_titled(call_id, tool_name, tool_name, tool_input)
+}
+
+/// Same frame with a display title that differs from the tool name: a
+/// delegation call (spawn_agent) carries a `subagent: …` title so the client
+/// renders an agent card, while `name` stays the machine identity.
+pub(crate) fn tool_call_frame_titled(
+    call_id: &str,
+    title: &str,
+    tool_name: &str,
+    tool_input: &Value,
+) -> Value {
     json!({
         "sessionUpdate": "tool_call",
         "toolCallId": call_id,
-        "title": tool_name,
+        "title": title,
         "name": tool_name,
         "kind": protocol::tool_kind(tool_name),
         "status": "in_progress",
@@ -469,11 +511,13 @@ fn approval_callback(
             // (clients merge blocks by toolCallId).
             let tool_name = info.tool_name.clone();
             let call_id = pairing.mint_for_ask(&tool_name);
+            let ask_title =
+                delegation_title(&tool_name, &info.tool_input).unwrap_or_else(|| tool_name.clone());
             let params = json!({
                 "sessionId": acp_session_id,
                 "toolCall": {
                     "toolCallId": call_id,
-                    "title": tool_name.clone(),
+                    "title": ask_title,
                     // Same `name` field as the streamed tool_call frames: the
                     // permission request carries a `ToolCall` too, and a client
                     // matching an approval back to a tool needs the
