@@ -244,6 +244,14 @@ impl AcpServer {
                             }),
                         ));
                     }
+                    // Text-only replay kills the client's task panel: re-emit
+                    // the stored plan so reloads restore it (the client's
+                    // existing plan handler draws it; no restore hook needed).
+                    if let Some(plan_update) = protocol::plan_update_from_disk(session.id).await {
+                        state
+                            .handle
+                            .send(protocol::session_update(&acp_id, plan_update));
+                    }
                 }
                 let current = st.model.lock().await.clone();
                 let models = catalog::models_payload(&state.config, current.as_deref());

@@ -7,6 +7,7 @@
 //! not a deserialize-into-one-struct step.
 
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 /// Standard JSON-RPC error codes plus ACP's auth-required code.
 pub const PARSE_ERROR: i64 = -32700;
@@ -335,6 +336,53 @@ fn image_links(summary: &str) -> Vec<String> {
         })
         .take(8)
         .collect()
+}
+
+/// The stored session plan as an ACP `plan` update, read straight from the
+/// plan JSON's shape (`tasks[].title`, `tasks[].status`). Statuses normalize
+/// case-insensitively (the on-disk serialization is PascalCase) onto the
+/// three ACP values; skipped counts as completed, everything unfinished as
+/// pending. `None` when there are no tasks — an empty panel is noise, not
+/// state.
+pub fn plan_update_from_json(doc: &Value) -> Option<Value> {
+    let tasks = doc.get("tasks")?.as_array()?;
+    let entries: Vec<Value> = tasks
+        .iter()
+        .filter_map(|t| {
+            let content = t.get("title")?.as_str()?.trim();
+            if content.is_empty() {
+                return None;
+            }
+            let raw = t.get("status").and_then(Value::as_str).unwrap_or("");
+            let normalized = raw.to_lowercase().replace(['_', '-'], "");
+            let status = match normalized.as_str() {
+                "completed" | "skipped" => "completed",
+                "inprogress" => "in_progress",
+                _ => "pending",
+            };
+            Some(json!({
+                "content": content,
+                "priority": "medium",
+                "kind": "task",
+                "status": status,
+            }))
+        })
+        .collect();
+    if entries.is_empty() {
+        None
+    } else {
+        Some(json!({ "sessionUpdate": "plan", "entries": entries }))
+    }
+}
+
+/// [`plan_update_from_json`] fed from the session's live plan file on disk.
+/// Missing file, unparseable JSON, and task-less plans all degrade to `None`
+/// — replay must never fail because the panel content is absent.
+pub async fn plan_update_from_disk(session_id: Uuid) -> Option<Value> {
+    let path = crate::utils::plan_files::plan_json_read_path(session_id).await;
+    let raw = tokio::fs::read_to_string(path).await.ok()?;
+    let doc = serde_json::from_str::<Value>(&raw).ok()?;
+    plan_update_from_json(&doc)
 }
 
 /// Permission modes advertised in `session/new` and accepted by
