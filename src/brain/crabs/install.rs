@@ -97,12 +97,7 @@ pub fn resolve(origin: &CrabOrigin) -> Result<ResolvedPack, InstallError> {
         CrabOrigin::Git { url, pin } => {
             // <repo-url>#<subdir> — the pack lives in a subdir of the repo
             // (market monorepo layout: crabs/<name>/ inside the index repo).
-            let (repo, subdir) = match url.split_once('#') {
-                Some((r, s)) if !s.is_empty() => {
-                    (r.to_string(), Some(s.trim_start_matches('/').to_string()))
-                }
-                _ => (url.clone(), None),
-            };
+            let (repo, subdir) = super::content::split_repo_fragment(url);
             let tmp = std::env::temp_dir().join(format!("crab-src-{}", uuid::Uuid::new_v4()));
             let out = std::process::Command::new("git")
                 .args(["clone", "--depth", "50", &repo, &tmp.to_string_lossy()])
@@ -227,17 +222,35 @@ pub fn install(
     payload.sort();
 
     // Drift gate: ledger pin for this crab vs the pack we're holding.
+    // Content-aware: a moved pin with an IDENTICAL payload is just
+    // upstream bookkeeping (someone else published a crab) — re-pin
+    // cleanly instead of demanding --force. A real content change still
+    // refuses until --force re-approves.
     let records = ledger::load(home).map_err(|e| InstallError::Io(e.to_string()))?;
-    if let Some(prior) = records
+    let blocked = records
         .iter()
         .find(|r| r.crab == manifest.name)
         .filter(|r| r.pin != pack.pin && !opts.force)
-    {
-        return Err(InstallError::Drift(format!(
-            "upstream changed since install ({} ≠ {}) — re-inspect, then --force to re-approve",
-            &prior.pin[..12.min(prior.pin.len())],
-            &pack.pin[..12.min(pack.pin.len())],
-        )));
+        .map(|prior| {
+            let upstream = super::content::content_sha(&payload, &pack.dir);
+            let installed = super::content::content_sha(&payload, home);
+            match (upstream, installed) {
+                (Some(a), Some(b)) if a == b => None, // same bytes, moved pin: fine
+                (Some(a), Some(b)) => Some(format!(
+                    "upstream changed since install ({} ≠ {}) — re-inspect, then --force to re-approve",
+                    &a[..12.min(a.len())],
+                    &b[..12.min(b.len())],
+                )),
+                _ => Some(format!(
+                    "upstream changed since install (pin {} ≠ {}) — re-inspect, then --force to re-approve",
+                    &prior.pin[..12.min(prior.pin.len())],
+                    &pack.pin[..12.min(pack.pin.len())],
+                )),
+            }
+        })
+        .unwrap_or(None);
+    if let Some(msg) = blocked {
+        return Err(InstallError::Drift(msg));
     }
 
     // Secret hard stop — before any write.
@@ -278,13 +291,17 @@ pub fn install(
         written.push(rel.clone());
     }
 
-    let record = CrabRecord::new(
+    let mut record = CrabRecord::new(
         manifest.name.clone(),
         manifest.version.clone(),
         pack.pin.clone(),
         pack.source.clone(),
         written,
     );
+    // Pin the content, not just the commit: future updates compare this
+    // hash against upstream so unrelated market commits don't drift us.
+    record.content_sha = super::content::content_sha(&record.files, home)
+        .or_else(|| super::content::content_sha(&payload, &pack.dir));
     let mut records = records;
     ledger::upsert(&mut records, record.clone());
     ledger::save(home, &records).map_err(|e| InstallError::Io(e.to_string()))?;
@@ -454,11 +471,18 @@ mod tests {
     fn drift_refuses_and_force_reapproves() {
         let pack = fixture_pack();
         let home = temp_dir("crab-home");
-        install(&home, &resolved(&pack), &InstallOpts::default()).unwrap();
-        // mutate the pack → manifest sha changes → drift
+        let first = install(&home, &resolved(&pack), &InstallOpts::default()).unwrap();
+        // Real drift = pin moved AND payload changed. Either alone is now
+        // legitimate: a crab.toml-only bump re-pins clean (content gate),
+        // a payload-only change hits the collision gate at copy time.
         std::fs::write(
             pack.join("crab.toml"),
             "name = \"a\"\nversion = \"0.2.0\"\ndescription = \"x\"\n\n[[skills]]\npath = \"skills/a\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            pack.join("skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\n\nchanged upstream body\n",
         )
         .unwrap();
         let err = install(&home, &resolved(&pack), &InstallOpts::default()).unwrap_err();
@@ -475,6 +499,7 @@ mod tests {
         .unwrap();
         let ledger = ledger::load(&home).unwrap();
         assert_eq!(ledger[0].version, "0.2.0");
+        assert_ne!(ledger[0].content_sha, first.content_sha);
     }
 
     #[test]
@@ -515,5 +540,80 @@ mod tests {
         let home = temp_dir("crab-home");
         let err = remove(&home, "nope").unwrap_err();
         assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn reinstall_after_unrelated_upstream_commit_repins_cleanly() {
+        // market-monorepo fixture: a real git repo, pack at crabs/a
+        let repo = temp_dir("crab-mkt");
+        std::fs::create_dir_all(repo.join("crabs/a/skills/a")).unwrap();
+        std::fs::write(repo.join("README.md"), "market readme").unwrap();
+        std::fs::write(
+            repo.join("crabs/a/crab.toml"),
+            "name = \"a\"\nversion = \"0.1.0\"\ndescription = \"x\"\n\n[[skills]]\npath = \"skills/a\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("crabs/a/skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\nbody",
+        )
+        .unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q"]);
+        git(&["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "c1",
+        ]);
+
+        let url = format!("{}#crabs/a", repo.display());
+        let home = temp_dir("crab-home");
+        let resolve_at = || {
+            resolve(&CrabOrigin::Git {
+                url: url.clone(),
+                pin: None,
+            })
+            .unwrap()
+        };
+        let first = install(&home, &resolve_at(), &InstallOpts::default()).unwrap();
+
+        // unrelated upstream commit: another crab publishes, HEAD moves,
+        // this pack's bytes don't change
+        std::fs::write(repo.join("README.md"), "market readme v2").unwrap();
+        git(&["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "c2",
+        ]);
+        assert_ne!(resolve_at().pin, first.pin, "fixture must move HEAD");
+
+        // the quirk: pin moved but content is identical → clean re-pin,
+        // no --force, and the content hash rides along
+        let second = install(&home, &resolve_at(), &InstallOpts::default())
+            .expect("identical content must re-pin without --force");
+        assert_ne!(second.pin, first.pin);
+        assert!(second.content_sha.is_some());
+        assert_eq!(second.content_sha, first.content_sha);
     }
 }

@@ -7,7 +7,10 @@
 //! [`check_updates`] is REPORT-ONLY — parity with the Tier 1 bb
 //! checker: it never applies anything, it names what moved. Git sources
 //! are checked with `git ls-remote` (one call, no clone); local sources
-//! by re-hashing the local `crab.toml`.
+//! by re-hashing the local `crab.toml`. A moved pin is no longer
+//! automatic drift: the crab's recorded file set is content-hashed
+//! upstream vs on disk (one shallow clone, only when the pin moved), so
+//! unrelated market commits don't drift every installed crab.
 
 use super::ledger::{self, CrabRecord};
 use serde::Deserialize;
@@ -128,7 +131,7 @@ pub async fn check_updates(home: &Path, index_url: &str) -> Vec<UpdateReport> {
     let market = load_index(index_url).await.ok().unwrap_or_default();
     let mut report = Vec::new();
     for rec in &records {
-        let status = status_for(rec, &market).await;
+        let status = status_for(rec, &market, home).await;
         report.push(UpdateReport {
             crab: rec.crab.clone(),
             installed_version: rec.version.clone(),
@@ -138,8 +141,10 @@ pub async fn check_updates(home: &Path, index_url: &str) -> Vec<UpdateReport> {
     report
 }
 
-async fn status_for(rec: &CrabRecord, market: &[MarketEntry]) -> UpdateStatus {
-    // Market-published pin wins when the crab is listed there.
+async fn status_for(rec: &CrabRecord, market: &[MarketEntry], home: &Path) -> UpdateStatus {
+    // Market-published pin wins when the crab is listed there. Index
+    // pins are PER-CRAB bookkeeping (set at that crab's publish), so the
+    // compare is already content-truthful — no clone needed.
     if let Some(pin) = market
         .iter()
         .find(|e| e.name == rec.crab)
@@ -158,15 +163,10 @@ async fn status_for(rec: &CrabRecord, market: &[MarketEntry]) -> UpdateStatus {
             let Some(url) = &rec.source.url else {
                 return UpdateStatus::Unknown("git source without url".into());
             };
-            remote_head(url)
-                .map(|head| {
-                    if head == rec.pin {
-                        UpdateStatus::UpToDate
-                    } else {
-                        UpdateStatus::Drift { current: head }
-                    }
-                })
-                .unwrap_or_else(UpdateStatus::Unknown)
+            match remote_head(url) {
+                Ok(head) => pin_status(rec, &head, home),
+                Err(e) => UpdateStatus::Unknown(e),
+            }
         }
         "local" => {
             let Some(path) = &rec.source.url else {
@@ -188,12 +188,62 @@ async fn status_for(rec: &CrabRecord, market: &[MarketEntry]) -> UpdateStatus {
     }
 }
 
+/// A moved pin is no longer automatically drift — that was the HEAD-pin
+/// quirk (any market commit drifted every installed crab). Content
+/// identity decides: identical bytes upstream vs installed = UpToDate.
+fn pin_status(rec: &CrabRecord, pin: &str, home: &Path) -> UpdateStatus {
+    if pin == rec.pin {
+        return UpdateStatus::UpToDate;
+    }
+    match content_matches_upstream(rec, home) {
+        Ok(true) => UpdateStatus::UpToDate,
+        Ok(false) => UpdateStatus::Drift {
+            current: pin.to_string(),
+        },
+        Err(e) => UpdateStatus::Unknown(e),
+    }
+}
+
+/// Shallow-clone the source repo and compare the recorded file set's
+/// content hash upstream vs on disk. One clone per mismatched crab, only
+/// when the pin actually moved.
+fn content_matches_upstream(rec: &CrabRecord, home: &Path) -> Result<bool, String> {
+    let Some(url) = &rec.source.url else {
+        return Err("git source without url".into());
+    };
+    let (repo, subdir) = super::content::split_repo_fragment(url);
+    let tmp = std::env::temp_dir().join(format!("crab-check-{}", uuid::Uuid::new_v4()));
+    let out = std::process::Command::new("git")
+        .args(["clone", "--depth", "50", &repo, &tmp.to_string_lossy()])
+        .output()
+        .map_err(|e| format!("git clone failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git clone failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let base = match &subdir {
+        Some(s) => tmp.join(s),
+        None => tmp.clone(),
+    };
+    let installed = super::content::content_sha(&rec.files, home);
+    let upstream = super::content::content_sha(&rec.files, &base);
+    let _ = std::fs::remove_dir_all(&tmp);
+    match (installed, upstream) {
+        (Some(a), Some(b)) => Ok(a == b),
+        // upstream no longer ships a recorded file — that IS a change
+        (Some(_), None) => Ok(false),
+        (None, _) => Err("installed file missing — cannot verify".into()),
+    }
+}
+
 /// Remote HEAD sha via `git ls-remote <url> HEAD` — no clone.
 fn remote_head(url: &str) -> Result<String, String> {
     // Ledger urls may carry a #subdir fragment (market monorepo) — ls-remote wants the bare repo.
-    let repo = url.split('#').next().unwrap_or(url);
+    let (repo, _) = super::content::split_repo_fragment(url);
     let out = std::process::Command::new("git")
-        .args(["ls-remote", repo, "HEAD"])
+        .args(["ls-remote", repo.as_str(), "HEAD"])
         .output()
         .map_err(|e| format!("git ls-remote failed: {e}"))?;
     if !out.status.success() {
@@ -213,6 +263,7 @@ fn remote_head(url: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn entry(name: &str, version: &str, pin: Option<&str>) -> MarketEntry {
         MarketEntry {
@@ -289,7 +340,7 @@ pin = "abc123"
         );
         // market lists the crab with a pin → that decides, no network call
         let market = vec![entry("competitor-watch", "0.1.1", Some("newpin"))];
-        let status = status_for(&rec, &market).await;
+        let status = status_for(&rec, &market, &home).await;
         assert_eq!(
             status,
             UpdateStatus::Drift {
@@ -297,7 +348,10 @@ pin = "abc123"
             }
         );
         let up_to_date = vec![entry("competitor-watch", "0.1.0", Some("oldpin"))];
-        assert_eq!(status_for(&rec, &up_to_date).await, UpdateStatus::UpToDate);
+        assert_eq!(
+            status_for(&rec, &up_to_date, &home).await,
+            UpdateStatus::UpToDate
+        );
     }
 
     #[tokio::test]
@@ -319,7 +373,9 @@ pin = "abc123"
             super::super::ledger::CrabSource::local(pack.to_string_lossy().into_owned()),
             vec![],
         );
-        assert_eq!(status_for(&rec, &[]).await, UpdateStatus::UpToDate);
+        let home = std::env::temp_dir().join(format!("crab-home-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(status_for(&rec, &[], &home).await, UpdateStatus::UpToDate);
         // edit the pack → drift
         std::fs::write(
             pack.join("crab.toml"),
@@ -327,7 +383,105 @@ pin = "abc123"
         )
         .unwrap();
         assert!(matches!(
-            status_for(&rec, &[]).await,
+            status_for(&rec, &[], &home).await,
+            UpdateStatus::Drift { .. }
+        ));
+    }
+
+    /// Run a git command in `repo`, asserting success.
+    fn git_run(repo: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn git_head(repo: &Path) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-C", &repo.to_string_lossy(), "rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// Stage everything and commit; returns the new HEAD sha.
+    fn commit_all(repo: &Path) -> String {
+        let id = ["-c", "user.email=t@t", "-c", "user.name=t"];
+        let mut add = id.to_vec();
+        add.push("add");
+        add.push("-A");
+        git_run(repo, &add);
+        let mut ci = id.to_vec();
+        ci.extend(["commit", "-qm", "c-next"]);
+        git_run(repo, &ci);
+        git_head(repo)
+    }
+
+    /// A real local git repo with the pack at `crabs/a`, committed once.
+    fn git_market_fixture() -> (PathBuf, String) {
+        let repo = std::env::temp_dir().join(format!("crab-mkt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(repo.join("crabs/a/skills/a")).unwrap();
+        std::fs::write(
+            repo.join("crabs/a/crab.toml"),
+            "name = \"a\"\nversion = \"0.1.0\"\ndescription = \"x\"\n\n[[skills]]\npath = \"skills/a\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("crabs/a/skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\nbody",
+        )
+        .unwrap();
+        git_run(&repo, &["init", "-q"]);
+        commit_all(&repo);
+        let sha1 = git_head(&repo);
+        (repo, sha1)
+    }
+
+    #[tokio::test]
+    async fn moved_pin_identical_content_is_up_to_date_real_drift_still_drifts() {
+        let (repo, sha1) = git_market_fixture();
+        // installed copy: identical bytes, pinned at the first commit
+        let home = std::env::temp_dir().join(format!("crab-home-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(home.join("skills/a")).unwrap();
+        std::fs::write(
+            home.join("skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\nbody",
+        )
+        .unwrap();
+        let rec = CrabRecord::new(
+            "a",
+            "0.1.0",
+            &sha1,
+            super::super::ledger::CrabSource::git(format!("{}#crabs/a", repo.display())),
+            vec!["skills/a/SKILL.md".into()],
+        );
+        // fast path: HEAD == pin
+        assert_eq!(status_for(&rec, &[], &home).await, UpdateStatus::UpToDate);
+
+        // THE QUIRK: unrelated upstream commit moves HEAD, pack unchanged
+        std::fs::write(repo.join("README.md"), "someone else published").unwrap();
+        let sha2 = commit_all(&repo);
+        assert_ne!(sha2, sha1);
+        // old behavior: Drift (forced the hand re-pin of 10 crabs).
+        // new behavior: content identical → UpToDate.
+        assert_eq!(status_for(&rec, &[], &home).await, UpdateStatus::UpToDate);
+
+        // REAL drift: upstream changes this crab's bytes
+        std::fs::write(
+            repo.join("crabs/a/skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\nbody v2",
+        )
+        .unwrap();
+        let _ = commit_all(&repo);
+        assert!(matches!(
+            status_for(&rec, &[], &home).await,
             UpdateStatus::Drift { .. }
         ));
     }

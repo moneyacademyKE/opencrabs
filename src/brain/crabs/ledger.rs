@@ -56,6 +56,12 @@ pub struct CrabRecord {
     /// RFC3339 UTC install timestamp.
     pub installed_at: String,
     pub files: Vec<String>,
+    /// Per-crab content identity: sha256 over the recorded file set at
+    /// install time (see [`super::content`]). `None` for records written
+    /// before per-path pinning — updates compare live disk vs upstream
+    /// for those, no migration needed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_sha: Option<String>,
 }
 
 impl CrabRecord {
@@ -74,6 +80,7 @@ impl CrabRecord {
             source,
             installed_at: chrono::Utc::now().to_rfc3339(),
             files,
+            content_sha: None,
         }
     }
 }
@@ -206,5 +213,25 @@ mod tests {
         std::fs::write(&path, "{not json").unwrap();
         let err = load(&home).unwrap_err().to_string();
         assert!(err.contains("malformed crab ledger"), "got: {err}");
+    }
+
+    #[test]
+    fn pre_content_sha_ledger_still_parses() {
+        // The live ledger was written before per-path pinning: no
+        // content_sha field. It must parse as None, not error.
+        let home = temp_home();
+        let path = ledger_path(&home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"[{"crab":"competitor-watch","version":"0.1.0","pin":"492344e",
+  "source":{"type":"git","url":"https://github.com/moneyacademyKE/crab-market#crabs/competitor-watch"},
+  "installed_at":"2026-10-01T20:00:00Z",
+  "files":["skills/competitor-watch/SKILL.md"]}]"#,
+        )
+        .unwrap();
+        let records = load(&home).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].content_sha, None);
     }
 }

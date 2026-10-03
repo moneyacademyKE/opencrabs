@@ -32,6 +32,7 @@
 //! - `install` — inspect → gate → copy → pin (and remove)
 //! - `market` — remote index fetch, search, drift report
 
+pub mod content;
 pub mod inspect;
 pub mod install;
 pub mod ledger;
