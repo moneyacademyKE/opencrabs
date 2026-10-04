@@ -43,6 +43,7 @@ pub struct MarketEntry {
 /// parses into a struct holding the vec, never a bare `Vec`.
 #[derive(Debug, Deserialize)]
 struct MarketIndex {
+    #[serde(default)]
     crabs: Vec<MarketEntry>,
 }
 
@@ -484,5 +485,42 @@ pin = "abc123"
             status_for(&rec, &[], &home).await,
             UpdateStatus::Drift { .. }
         ));
+    }
+
+    #[test]
+    fn parse_index_rejects_malformed() {
+        // not TOML at all
+        assert!(parse_index("this is not toml {{{").is_err());
+        // valid TOML, entry missing a required field (no `name`)
+        let missing_name = r#"
+[[crabs]]
+version = "0.1.0"
+description = "d"
+"#;
+        let err = parse_index(missing_name).unwrap_err();
+        assert!(err.contains("parse failed"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parse_index_optional_fields_default_to_none() {
+        let raw = r#"
+[[crabs]]
+name = "minimal"
+version = "0.1.0"
+description = "no category, no pin"
+repo = "https://example.com/market"
+"#;
+        let entries = parse_index(raw).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "minimal");
+        assert!(entries[0].pin.is_none());
+        assert!(entries[0].category.is_none());
+    }
+
+    #[test]
+    fn empty_index_parses_to_no_entries() {
+        // a fresh market with zero crabs: legal, not an error
+        let entries = parse_index("").unwrap();
+        assert!(entries.is_empty());
     }
 }
