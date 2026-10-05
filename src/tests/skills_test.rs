@@ -85,16 +85,26 @@ fn body_preserves_internal_blank_lines_and_markdown() {
     assert!(skill.body.contains("- item 1\n- item 2"));
 }
 
-#[test]
-fn builtin_security_audit_loads_via_resolver() {
-    // The compile-time embedded security-audit skill must always resolve.
-    let skill = resolve_skill("security-audit").expect("built-in 'security-audit' must exist");
-    assert_eq!(skill.source, SkillSource::Builtin);
-    assert!(
-        skill.description.to_lowercase().contains("security"),
-        "description should mention security"
-    );
-    assert!(!skill.body.is_empty());
+#[tokio::test]
+async fn builtin_security_audit_loads_via_resolver() {
+    // The compile-time embedded security-audit skill must always resolve —
+    // under a throwaway profile, because a user-installed `security-audit`
+    // in the live home legitimately shadows the builtin (SkillSource::User),
+    // and this test is about the embedded copy, not the live home's overlays.
+    use crate::config::profile::with_profile_home_async;
+
+    let profile = format!("skill-builtin-{}", uuid::Uuid::new_v4());
+    with_profile_home_async(Some(&profile), async {
+        let skill =
+            resolve_skill("security-audit").expect("built-in 'security-audit' must exist");
+        assert_eq!(skill.source, SkillSource::Builtin);
+        assert!(
+            skill.description.to_lowercase().contains("security"),
+            "description should mention security"
+        );
+        assert!(!skill.body.is_empty());
+    })
+    .await;
 }
 
 #[test]
