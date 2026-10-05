@@ -11,14 +11,13 @@
 //! the loop keeps reading — `session/cancel` must be processable mid-turn.
 //! Notifications never get responses, per JSON-RPC.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 use crate::brain::agent::{AgentService, QueuedUserMessage};
 use crate::brain::provider::create_provider_by_name;
@@ -28,41 +27,10 @@ use crate::utils::provider_pair::parse_pair;
 
 use super::catalog;
 use super::protocol::{self, ClientMessage};
-use super::transport::{Transport, TransportHandle};
+use super::state::{ServerState, SessionState, SteerMap};
+use super::transport::Transport;
 use super::turn;
-
-/// Per-session steering queue (`session/steer`): drained by the tool loop's
-/// `MessageQueueCallback` between iterations. Shared with the agent service
-/// builder, which is why it lives outside the server struct's Mutex.
-pub type SteerMap = Arc<Mutex<HashMap<Uuid, VecDeque<QueuedUserMessage>>>>;
-
-pub fn new_steer_map() -> SteerMap {
-    Arc::new(Mutex::new(HashMap::new()))
-}
-
-/// One ACP session's live state.
-pub struct SessionState {
-    /// The opencrabs session — same UUID the ACP session id stringifies.
-    pub id: Uuid,
-    /// Model override from `--model` or `session/set_model`/`session/set_mode`.
-    pub model: Mutex<Option<String>>,
-    /// Permission policy from `session/set_mode` (default supervised).
-    pub mode: Mutex<protocol::AcpMode>,
-    /// Cancel token of the in-flight turn; None when idle.
-    pub active_cancel: Mutex<Option<CancellationToken>>,
-}
-
-/// Everything a dispatch or turn task needs, shared under one Arc.
-pub struct ServerState {
-    pub handle: TransportHandle,
-    pub agent: Arc<AgentService>,
-    pub sessions: SessionService,
-    pub messages: MessageService,
-    pub states: Mutex<HashMap<String, Arc<SessionState>>>,
-    pub steer: SteerMap,
-    pub default_model: Option<String>,
-    pub config: Arc<crate::config::Config>,
-}
+use super::watch;
 
 /// The server: owns the transport, dispatches to shared state.
 pub struct AcpServer {
@@ -206,8 +174,17 @@ impl AcpServer {
                     model: Mutex::new(state.default_model.clone()),
                     mode: Mutex::new(protocol::AcpMode::default()),
                     active_cancel: Mutex::new(None),
+                    watch_cancel: CancellationToken::new(),
                 });
-                state.states.lock().await.insert(acp_id.clone(), st.clone());
+                {
+                    let mut states = state.states.lock().await;
+                    if let Some(old) = states.get(&acp_id) {
+                        // Reload supersession: stop the previous mirror so
+                        // exactly one watcher per session keeps emitting.
+                        old.watch_cancel.cancel();
+                    }
+                    states.insert(acp_id.clone(), st.clone());
+                }
                 // The agent service's per-session model maps are in-memory,
                 // so a fresh acp process starts blank while the session row
                 // still knows the user's pick — rehydrate from the row.
@@ -252,6 +229,16 @@ impl AcpServer {
                             .handle
                             .send(protocol::session_update(&acp_id, plan_update));
                     }
+                    // Cross-surface mirror: from here on, turns driven from
+                    // any other surface (Telegram, TUI, cron) push to this
+                    // client as standard session/update frames. Seeded to
+                    // the last replayed row so nothing double-emits.
+                    watch::spawn_mirror(
+                        &state,
+                        &st,
+                        &acp_id,
+                        history.last().map_or(0, |m| m.sequence),
+                    );
                 }
                 let current = st.model.lock().await.clone();
                 let models = catalog::models_payload(&state.config, current.as_deref());

@@ -18,13 +18,17 @@
 //! - [`subagents`]: delegation surface — spawn calls classify as agent cards
 //!   and detached child activity is re-emitted as stamped steps.
 //! - [`onboard`]: the headless `/onboard` intercept.
+//! - [`watch`]: the cross-surface message mirror for loaded sessions.
 
 pub mod catalog;
 pub mod onboard;
 pub mod protocol;
 pub mod server;
+pub mod state;
 pub mod subagents;
 pub mod transport;
 pub mod turn;
+pub mod watch;
 
-pub use server::{AcpServer, ServerState, SteerMap, new_steer_map};
+pub use server::AcpServer;
+pub use state::{ServerState, SessionState, SteerMap, new_steer_map};
