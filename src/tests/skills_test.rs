@@ -95,8 +95,7 @@ async fn builtin_security_audit_loads_via_resolver() {
 
     let profile = format!("skill-builtin-{}", uuid::Uuid::new_v4());
     with_profile_home_async(Some(&profile), async {
-        let skill =
-            resolve_skill("security-audit").expect("built-in 'security-audit' must exist");
+        let skill = resolve_skill("security-audit").expect("built-in 'security-audit' must exist");
         assert_eq!(skill.source, SkillSource::Builtin);
         assert!(
             skill.description.to_lowercase().contains("security"),
