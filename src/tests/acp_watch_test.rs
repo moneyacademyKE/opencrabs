@@ -2,7 +2,7 @@
 //! loop's DB/timing behavior is proven on the wire (two-process probe), not
 //! mocked here — these tests pin the pure part.
 
-use crate::acp::watch::mirror_updates;
+use crate::acp::watch::{mirror_updates, settled_watermark};
 use crate::db::models::Message;
 use serde_json::Value;
 
@@ -91,4 +91,131 @@ fn watermark_never_regresses_on_empty_suffix() {
     let (updates, mark) = mirror_updates(&history, 10);
     assert!(updates.is_empty());
     assert_eq!(mark, 10, "a stale history read must not rewind the mirror");
+}
+
+#[test]
+fn probe_assistant_row_with_inline_reasoning_mirrors() {
+    // The EXACT bytes the wire probe persisted (session 2f3f3a3c): a
+    // well-formed reasoning block plus visible text. The live mirror sent
+    // only the user chunk for this pair (trace: `emit updates=1 wm 0->2`),
+    // so this test pins where the loss happens: pure mapper or live path.
+    let content = "<!-- reasoning -->\nThe user wants me to reply with exactly: MIRROR-OK 247518\n\nSimple. Just reply exactly that.\n<!-- /reasoning -->\n\nMIRROR-OK 247518\n\n";
+    let history = vec![
+        msg("user", "Reply with exactly: MIRROR-OK 247518", 1, None),
+        msg("assistant", content, 2, None),
+    ];
+    let (updates, mark) = mirror_updates(&history, 0);
+    println!("UPDATES={} kinds={:?}", updates.len(), kinds(&updates));
+    assert_eq!(mark, 2);
+    assert!(
+        updates.len() >= 2,
+        "assistant row produced no updates: {updates:?}"
+    );
+    assert!(kinds(&updates).contains(&"agent_message_chunk"));
+}
+
+#[test]
+fn persisted_reasoning_row_mirrors_as_thought_plus_message() {
+    // Regression (mirror probe, session 2f3f3a3c): a REAL persisted assistant
+    // row — reasoning block at position 0, answer trailing — crossed the wire
+    // as zero chunks while the user row beside it mirrored fine. The exact
+    // bytes from the database must mirror as thought + message.
+    let rows = vec![
+        msg("user", "Reply with exactly: MIRROR-OK 247518", 1, None),
+        msg(
+            "assistant",
+            "<!-- reasoning -->\nThe user wants me to reply with exactly: MIRROR-OK 247518\n\nSimple. Just reply exactly that.\n<!-- /reasoning -->\n\nMIRROR-OK 247518\n\n",
+            2,
+            None,
+        ),
+    ];
+    let (updates, mark) = mirror_updates(&rows, 0);
+    assert_eq!(mark, 2);
+    let kinds: Vec<&str> = updates
+        .iter()
+        .map(|u| u["sessionUpdate"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "user_message_chunk",
+            "agent_thought_chunk",
+            "agent_message_chunk"
+        ]
+    );
+    assert!(
+        updates[2]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("MIRROR-OK")
+    );
+}
+
+#[test]
+fn in_flight_assistant_row_is_held_until_filled() {
+    // The store inserts the assistant row EMPTY at turn start and fills it
+    // IN PLACE at turn end. Mirroring past it early burns the watermark and
+    // loses the answer forever (session 2f3f3a3c: one emit, then silence).
+    let (updates, mark) = mirror_updates(
+        &[
+            msg("user", "do the thing", 1, None),
+            msg("assistant", "", 2, None),
+        ],
+        0,
+    );
+    assert_eq!(updates.len(), 1, "only the user row may mirror mid-turn");
+    assert_eq!(mark, 1, "watermark must stop before the unfinished row");
+
+    let mut filled = msg("assistant", "", 2, None);
+    filled.content = "<!-- reasoning -->\nthink\n<!-- /reasoning -->\n\nthe answer".to_string();
+    let (updates, mark) = mirror_updates(&[msg("user", "do the thing", 1, None), filled], 1);
+    let kinds: Vec<&str> = updates
+        .iter()
+        .map(|u| u["sessionUpdate"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, vec!["agent_thought_chunk", "agent_message_chunk"]);
+    assert_eq!(mark, 2);
+}
+
+#[test]
+fn completed_empty_assistant_row_advances_the_watermark() {
+    // A turn that produced no visible text still FINISHES: duration_secs is
+    // stamped with the final content, marking the row settled.
+    let mut done = msg("assistant", "", 2, None);
+    done.duration_secs = Some(7);
+    let (updates, mark) = mirror_updates(&[msg("user", "hi", 1, None), done], 0);
+    assert_eq!(updates.len(), 1);
+    assert_eq!(mark, 2);
+}
+
+#[test]
+fn rows_behind_an_in_flight_one_wait_their_turn() {
+    // A queued foreign turn must not jump the unfinished row, or it emits
+    // twice when the window catches up.
+    let history = vec![
+        msg("user", "first", 1, None),
+        msg("assistant", "", 2, None),
+        msg("user", "second", 3, None),
+    ];
+    let (updates, mark) = mirror_updates(&history, 0);
+    assert_eq!(updates.len(), 1);
+    assert_eq!(mark, 1);
+    let (updates, _) = mirror_updates(&history, 1);
+    assert!(
+        updates.is_empty(),
+        "rows after an in-flight row stay pending"
+    );
+}
+
+#[test]
+fn settled_watermark_skips_a_trailing_in_flight_row() {
+    // Load-time seeding mid-turn: the answer still arrives via the mirror
+    // once the writer finishes.
+    let history = vec![msg("user", "first", 1, None), msg("assistant", "", 2, None)];
+    assert_eq!(settled_watermark(&history), 1);
+    let mut done = msg("assistant", "", 2, None);
+    done.duration_secs = Some(3);
+    let settled = vec![msg("user", "first", 1, None), done];
+    assert_eq!(settled_watermark(&settled), 2);
+    assert_eq!(settled_watermark(&[]), 0);
 }

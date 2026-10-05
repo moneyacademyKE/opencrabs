@@ -232,13 +232,9 @@ impl AcpServer {
                     // Cross-surface mirror: from here on, turns driven from
                     // any other surface (Telegram, TUI, cron) push to this
                     // client as standard session/update frames. Seeded to
-                    // the last replayed row so nothing double-emits.
-                    watch::spawn_mirror(
-                        &state,
-                        &st,
-                        &acp_id,
-                        history.last().map_or(0, |m| m.sequence),
-                    );
+                    // the last SETTLED row: a turn already in flight when
+                    // this client attached still mirrors once it completes.
+                    watch::spawn_mirror(&state, &st, &acp_id, watch::settled_watermark(&history));
                 }
                 let current = st.model.lock().await.clone();
                 let models = catalog::models_payload(&state.config, current.as_deref());
