@@ -106,11 +106,19 @@ User-level deploy.
 }
 
 /// Built-in skills still resolve when no project or user overlays exist.
-#[test]
-fn builtins_still_resolve_without_overlays() {
-    let skill = resolve_skill("security-audit");
-    assert!(skill.is_some());
-    assert_eq!(skill.unwrap().source, SkillSource::Builtin);
+#[tokio::test]
+async fn builtins_still_resolve_without_overlays() {
+    // "Without overlays" means without overlays anywhere — including the
+    // live home, where a user-installed skill of the same name legitimately
+    // shadows the builtin (observed 2026-10-04: a real
+    // ~/.opencrabs/skills/security-audit flipped this to SkillSource::User).
+    let profile = throwaway_profile();
+    with_profile_home_async(Some(&profile), async {
+        let skill = resolve_skill("security-audit");
+        assert!(skill.is_some());
+        assert_eq!(skill.unwrap().source, SkillSource::Builtin);
+    })
+    .await;
 }
 
 /// Multiple projects each contribute their own skills.
