@@ -200,6 +200,59 @@ pub(crate) async fn cmd_crab(
             );
             Ok(())
         }
+        CrabCommands::Verify { name } => {
+            let report = crabs::market::verify(&home, name.as_deref())
+                .await
+                .map_err(anyhow::Error::msg)?;
+            if report.is_empty() {
+                println!("no crabs installed — nothing to verify.");
+                return Ok(());
+            }
+            let mut issues = 0;
+            for r in &report {
+                let (label, bad) = match r.verdict {
+                    crabs::market::VerifyVerdict::Ok => ("ok".to_string(), false),
+                    crabs::market::VerifyVerdict::Legacy => (
+                        "legacy (pre-content-pinning; upstream matches)".to_string(),
+                        false,
+                    ),
+                    crabs::market::VerifyVerdict::Modified => (
+                        "MODIFIED (live bytes differ from install record)".to_string(),
+                        true,
+                    ),
+                    crabs::market::VerifyVerdict::Stale => (
+                        "STALE (upstream has new bytes; re-install to update)".to_string(),
+                        true,
+                    ),
+                    crabs::market::VerifyVerdict::ModifiedStale => (
+                        "MODIFIED+STALE (locally edited; upstream moved)".to_string(),
+                        true,
+                    ),
+                    crabs::market::VerifyVerdict::NoUpstream => {
+                        ("? upstream unreachable".to_string(), true)
+                    }
+                    crabs::market::VerifyVerdict::Unverifiable => {
+                        ("? recorded file missing on disk".to_string(), true)
+                    }
+                };
+                if bad {
+                    issues += 1;
+                }
+                println!("{:<24} {label}", r.crab);
+            }
+            let clean = report.len() - issues;
+            if issues > 0 {
+                anyhow::bail!(
+                    "verify: {clean}/{} crabs clean, {issues} issue(s)",
+                    report.len()
+                );
+            }
+            println!(
+                "\nall {} crabs verified: recorded == live == upstream.",
+                report.len()
+            );
+            Ok(())
+        }
         CrabCommands::Remove { name } => {
             let record = crabs::install::remove(&home, &name).unwrap_or_exit();
             println!(

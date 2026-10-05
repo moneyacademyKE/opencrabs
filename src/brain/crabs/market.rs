@@ -14,7 +14,7 @@
 
 use super::ledger::{self, CrabRecord};
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Default remote index (raw GitHub). Overridable for tests and mirrors.
 pub const DEFAULT_MARKET_INDEX: &str =
@@ -128,8 +128,24 @@ pub struct UpdateReport {
 /// `git ls-remote` (no clone); local sources re-hash the manifest;
 /// market sources compare against the index pin.
 pub async fn check_updates(home: &Path, index_url: &str) -> Vec<UpdateReport> {
-    let records = ledger::load(home).unwrap_or_default();
-    let market = load_index(index_url).await.ok().unwrap_or_default();
+    let records = match ledger::load(home) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "[crab] warning: ledger unreadable ({e}); proceeding as if nothing is installed"
+            );
+            Vec::new()
+        }
+    };
+    let market = match load_index(index_url).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "[crab] warning: market index unreachable ({e}); judging each crab by its git source"
+            );
+            Vec::new()
+        }
+    };
     let mut report = Vec::new();
     for rec in &records {
         let status = status_for(rec, &market, home).await;
@@ -208,14 +224,12 @@ fn pin_status(rec: &CrabRecord, pin: &str, home: &Path) -> UpdateStatus {
 /// Shallow-clone the source repo and compare the recorded file set's
 /// content hash upstream vs on disk. One clone per mismatched crab, only
 /// when the pin actually moved.
-fn content_matches_upstream(rec: &CrabRecord, home: &Path) -> Result<bool, String> {
-    let Some(url) = &rec.source.url else {
-        return Err("git source without url".into());
-    };
-    let (repo, subdir) = super::content::split_repo_fragment(url);
+/// Shallow-clone `repo` (bare URL, no fragment) into a fresh temp dir.
+/// Caller owns cleanup.
+fn shallow_clone(repo: &str) -> Result<PathBuf, String> {
     let tmp = std::env::temp_dir().join(format!("crab-check-{}", uuid::Uuid::new_v4()));
     let out = std::process::Command::new("git")
-        .args(["clone", "--depth", "50", &repo, &tmp.to_string_lossy()])
+        .args(["clone", "--depth", "50", repo, &tmp.to_string_lossy()])
         .output()
         .map_err(|e| format!("git clone failed: {e}"))?;
     if !out.status.success() {
@@ -224,6 +238,15 @@ fn content_matches_upstream(rec: &CrabRecord, home: &Path) -> Result<bool, Strin
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
+    Ok(tmp)
+}
+
+fn content_matches_upstream(rec: &CrabRecord, home: &Path) -> Result<bool, String> {
+    let Some(url) = &rec.source.url else {
+        return Err("git source without url".into());
+    };
+    let (repo, subdir) = super::content::split_repo_fragment(url);
+    let tmp = shallow_clone(&repo)?;
     let base = match &subdir {
         Some(s) => tmp.join(s),
         None => tmp.clone(),
@@ -259,6 +282,142 @@ fn remote_head(url: &str) -> Result<String, String> {
         return Err("git ls-remote returned no sha".into());
     }
     Ok(sha)
+}
+
+// ------------------------------------------------------------------
+// `crab verify` — on-demand integrity check.
+//
+// `crab updates` asks "did upstream move?"; verify asks the stronger
+// question: are the installed bytes EXACTLY what install recorded
+// (tamper/local-edit check), and do they still match what upstream
+// ships right now (staleness)? Three-way compare, report-only.
+
+/// Outcome of the three-way compare: recorded ↔ live ↔ upstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyVerdict {
+    /// recorded == live == upstream
+    Ok,
+    /// live bytes differ from what install recorded
+    Modified,
+    /// upstream no longer matches the installed bytes
+    Stale,
+    /// locally edited AND superseded upstream
+    ModifiedStale,
+    /// pre-content-pinning record: upstream matches, no identity to
+    /// tamper-check against
+    Legacy,
+    /// upstream could not be resolved (clone failed, source missing)
+    NoUpstream,
+    /// a recorded file is missing on disk — cannot verify
+    Unverifiable,
+}
+
+pub struct VerifyReport {
+    pub crab: String,
+    pub verdict: VerifyVerdict,
+}
+
+/// The whole decision, no I/O. `home_sha: None` means a recorded file is
+/// unreadable on disk; `upstream_sha: None` means upstream is missing or
+/// unreachable. Precedence: unverifiable > no-upstream > three-way.
+fn verify_verdict(
+    ledger_sha: Option<&str>,
+    home_sha: Option<String>,
+    upstream_sha: Option<String>,
+) -> VerifyVerdict {
+    let Some(home) = home_sha else {
+        return VerifyVerdict::Unverifiable;
+    };
+    let Some(upstream) = upstream_sha else {
+        return VerifyVerdict::NoUpstream;
+    };
+    match (ledger_sha, upstream == home) {
+        (None, true) => VerifyVerdict::Legacy,
+        (None, false) => VerifyVerdict::Stale,
+        (Some(recorded), true) => {
+            if recorded == home {
+                VerifyVerdict::Ok
+            } else {
+                VerifyVerdict::Modified
+            }
+        }
+        (Some(recorded), false) => {
+            if recorded == home {
+                VerifyVerdict::Stale
+            } else {
+                VerifyVerdict::ModifiedStale
+            }
+        }
+    }
+}
+
+/// Verify one crab (or all) against the ledger and its upstream. Git
+/// sources are cloned ONCE per unique repo, not once per crab: the
+/// market is a monorepo, so 11 crabs cost one clone.
+pub async fn verify(home: &Path, name: Option<&str>) -> Result<Vec<VerifyReport>, String> {
+    let records = ledger::load(home).map_err(|e| format!("ledger unreadable: {e}"))?;
+    let mut selected: Vec<&CrabRecord> = records.iter().collect();
+    if let Some(n) = name {
+        if !selected.iter().any(|r| r.crab == n) {
+            return Err(format!("not installed: {n} — see `crab list`"));
+        }
+        selected.retain(|r| r.crab == n);
+    }
+    let mut repos: Vec<String> = Vec::new();
+    for rec in &selected {
+        if rec.source.kind.as_str() != "git" {
+            continue;
+        }
+        let Some(url) = &rec.source.url else {
+            continue;
+        };
+        let (repo, _) = super::content::split_repo_fragment(url);
+        if !repos.contains(&repo) {
+            repos.push(repo);
+        }
+    }
+    let mut clones: Vec<(String, PathBuf)> = Vec::new();
+    for repo in &repos {
+        // unreachable repo → its crabs report NoUpstream; keep going
+        if let Ok(dir) = shallow_clone(repo) {
+            clones.push((repo.clone(), dir));
+        }
+    }
+    let mut report = Vec::new();
+    for rec in &selected {
+        let ledger_sha = rec.content_sha.as_deref();
+        let home_sha = super::content::content_sha(&rec.files, home);
+        let upstream_sha = match rec.source.kind.as_str() {
+            "git" => {
+                let url = rec.source.url.as_deref().unwrap_or("");
+                let (repo, subdir) = super::content::split_repo_fragment(url);
+                clones
+                    .iter()
+                    .find(|(r, _)| *r == repo)
+                    .and_then(|(_, base)| {
+                        let pack = match subdir {
+                            Some(s) => base.join(s),
+                            None => base.clone(),
+                        };
+                        super::content::content_sha(&rec.files, &pack)
+                    })
+            }
+            "local" => rec
+                .source
+                .url
+                .as_deref()
+                .and_then(|p| super::content::content_sha(&rec.files, Path::new(p))),
+            _ => None,
+        };
+        report.push(VerifyReport {
+            crab: rec.crab.clone(),
+            verdict: verify_verdict(ledger_sha, home_sha, upstream_sha),
+        });
+    }
+    for (_, dir) in &clones {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -485,6 +644,120 @@ pin = "abc123"
             status_for(&rec, &[], &home).await,
             UpdateStatus::Drift { .. }
         ));
+    }
+
+    // ---- verify ----
+
+    /// Fresh "install" of the git fixture: pack committed upstream, bytes
+    /// copied into a scratch home, ledger record with content identity.
+    fn verify_fixture() -> (PathBuf, PathBuf, CrabRecord) {
+        let (repo, sha1) = git_market_fixture();
+        let home = std::env::temp_dir().join(format!("crab-home-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(home.join("skills/a")).unwrap();
+        std::fs::write(
+            home.join("skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\nbody",
+        )
+        .unwrap();
+        let mut rec = CrabRecord::new(
+            "a",
+            "0.1.0",
+            &sha1,
+            super::super::ledger::CrabSource::git(format!("{}#crabs/a", repo.display())),
+            vec!["skills/a/SKILL.md".into()],
+        );
+        rec.content_sha = crate::brain::crabs::content::content_sha(&rec.files, &home);
+        (repo, home, rec)
+    }
+
+    fn write_ledger(home: &Path, rec: &CrabRecord) {
+        super::ledger::save(home, std::slice::from_ref(rec)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn verify_ok_when_recorded_live_and_upstream_match() {
+        let (repo, home, rec) = verify_fixture();
+        write_ledger(&home, &rec);
+        let report = verify(&home, None).await.unwrap();
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].verdict, VerifyVerdict::Ok);
+        // by-name lookup hits the same verdict
+        let one = verify(&home, Some("a")).await.unwrap();
+        assert_eq!(one[0].verdict, VerifyVerdict::Ok);
+        let _ = std::fs::remove_dir_all(repo);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn verify_flags_local_tampering() {
+        let (repo, home, rec) = verify_fixture();
+        write_ledger(&home, &rec);
+        // someone edits the installed skill; upstream still has the original
+        std::fs::write(home.join("skills/a/SKILL.md"), "tampered by hand").unwrap();
+        let report = verify(&home, None).await.unwrap();
+        assert_eq!(report[0].verdict, VerifyVerdict::ModifiedStale);
+        // and verify refuses a name that isn't installed
+        assert!(verify(&home, Some("nope")).await.is_err());
+        let _ = std::fs::remove_dir_all(repo);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn verify_flags_stale_upstream() {
+        let (repo, home, rec) = verify_fixture();
+        write_ledger(&home, &rec);
+        // upstream publishes new bytes for THIS crab; home untouched
+        std::fs::write(
+            repo.join("crabs/a/skills/a/SKILL.md"),
+            "---\nname: a\ndescription: x\n---\nbody v2",
+        )
+        .unwrap();
+        commit_all(&repo);
+        let report = verify(&home, None).await.unwrap();
+        assert_eq!(report[0].verdict, VerifyVerdict::Stale);
+        let _ = std::fs::remove_dir_all(repo);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn verify_verdict_precedence_table() {
+        let h = Some("home".to_string());
+        // recorded missing on disk beats everything
+        assert_eq!(
+            verify_verdict(Some("r"), None, Some("u".into())),
+            VerifyVerdict::Unverifiable
+        );
+        // unreachable upstream beats the three-way
+        assert_eq!(
+            verify_verdict(Some("r"), h.clone(), None),
+            VerifyVerdict::NoUpstream
+        );
+        // legacy record: no identity, upstream matches
+        assert_eq!(
+            verify_verdict(None, h.clone(), Some("home".into())),
+            VerifyVerdict::Legacy
+        );
+        // legacy record with moved upstream
+        assert_eq!(
+            verify_verdict(None, h.clone(), Some("u".into())),
+            VerifyVerdict::Stale
+        );
+        // home == upstream but ledger recorded something else: local edit
+        // the upstream happens to agree with
+        assert_eq!(
+            verify_verdict(Some("r"), h.clone(), Some("home".into())),
+            VerifyVerdict::Modified
+        );
+        // plain stale: home matches the record, upstream moved
+        assert_eq!(
+            verify_verdict(Some("home"), h.clone(), Some("u".into())),
+            VerifyVerdict::Stale
+        );
+        // both
+        assert_eq!(
+            verify_verdict(Some("r"), h, Some("u".into())),
+            VerifyVerdict::ModifiedStale
+        );
     }
 
     #[test]

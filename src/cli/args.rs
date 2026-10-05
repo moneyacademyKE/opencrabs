@@ -396,6 +396,12 @@ pub enum CrabCommands {
         index: Option<String>,
     },
 
+    /// Verify installed crabs byte-for-byte: recorded vs live vs upstream
+    Verify {
+        /// Verify a single crab (default: all installed)
+        name: Option<String>,
+    },
+
     /// Remove a crab: deletes exactly the ledger-recorded files
     Remove {
         /// Crab name (see `opencrabs crab list`)
