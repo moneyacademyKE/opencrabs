@@ -24,7 +24,7 @@ use crate::brain::agent::{ApprovalCallback, ProgressCallback, ProgressEvent, Too
 use crate::brain::provider::StopReason;
 
 use super::protocol::{self, permission_options, permission_outcome, session_update, text_chunk};
-use super::server::{ServerState, SessionState};
+use super::state::{ServerState, SessionState};
 use super::subagents::{SpawnWatches, delegation_title, run_spawn_watches, spawned_agent_id};
 use super::transport::TransportHandle;
 
