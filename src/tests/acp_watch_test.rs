@@ -57,7 +57,10 @@ fn fresh_suffix_mirrors_through_the_replay_shapes() {
         msg("assistant", "daemon replied", 3, None),
     ];
     let (updates, mark) = mirror_updates(&history, 1);
-    assert_eq!(kinds(&updates), vec!["user_message_chunk", "agent_message_chunk"]);
+    assert_eq!(
+        kinds(&updates),
+        vec!["user_message_chunk", "agent_message_chunk"]
+    );
     assert_eq!(updates[0]["content"]["text"], "from telegram");
     assert_eq!(updates[1]["content"]["text"], "daemon replied");
     assert_eq!(mark, 3);
@@ -67,16 +70,16 @@ fn fresh_suffix_mirrors_through_the_replay_shapes() {
 fn assistant_thinking_rides_along() {
     let history = vec![msg("assistant", "answer", 5, Some("pondering"))];
     let (updates, mark) = mirror_updates(&history, 4);
-    assert_eq!(kinds(&updates), vec!["agent_thought_chunk", "agent_message_chunk"]);
+    assert_eq!(
+        kinds(&updates),
+        vec!["agent_thought_chunk", "agent_message_chunk"]
+    );
     assert_eq!(mark, 5);
 }
 
 #[test]
 fn blank_rows_advance_the_watermark_without_chunks() {
-    let history = vec![
-        msg("user", "", 8, None),
-        msg("assistant", "real", 9, None),
-    ];
+    let history = vec![msg("user", "", 8, None), msg("assistant", "real", 9, None)];
     let (updates, mark) = mirror_updates(&history, 7);
     assert_eq!(kinds(&updates), vec!["agent_message_chunk"]);
     assert_eq!(mark, 9, "the blank row is consumed, never re-offered");
