@@ -308,13 +308,33 @@ pub fn content_blocks(summary: &str) -> Value {
     let mut blocks = vec![json!({ "type": "text", "text": summary })];
     for uri in image_links(summary) {
         let name = uri.rsplit('/').next().unwrap_or("image");
+        // Renderer-side clients cannot stat the file themselves (no
+        // filesystem in a webview), so the block carries its own metadata:
+        // stat here, ship mime + size on the wire.
+        let path = uri.strip_prefix("file://").unwrap_or(uri.as_str());
+        let Ok(meta) = std::fs::metadata(path) else {
+            continue; // gone between scan and stat: the prose still names it
+        };
         blocks.push(json!({
             "type": "resource_link",
             "uri": uri,
             "name": name,
+            "mimeType": image_mime(path),
+            "size": meta.len(),
         }));
     }
     Value::Array(blocks)
+}
+
+/// MIME type for the five image extensions `image_links` accepts.
+fn image_mime(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        _ => "image/webp",
+    }
 }
 
 /// Absolute `file://` URIs for image paths mentioned in `summary` that exist

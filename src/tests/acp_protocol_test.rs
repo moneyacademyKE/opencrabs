@@ -262,6 +262,12 @@ fn a_disk_backed_image_path_becomes_a_resource_link() {
         found[0]["name"],
         img.0.file_name().unwrap().to_string_lossy().to_string()
     );
+    // Renderer clients have no filesystem: metadata rides the block.
+    assert_eq!(found[0]["mimeType"], "image/png");
+    assert_eq!(
+        found[0]["size"].as_u64().unwrap(),
+        std::fs::metadata(&img.0).unwrap().len()
+    );
 }
 
 #[test]
