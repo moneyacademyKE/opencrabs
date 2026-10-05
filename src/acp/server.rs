@@ -235,6 +235,16 @@ impl AcpServer {
                     // the last SETTLED row: a turn already in flight when
                     // this client attached still mirrors once it completes.
                     watch::spawn_mirror(&state, &st, &acp_id, watch::settled_watermark(&history));
+                } else {
+                    // Fresh sessions (and the rare resume whose history could
+                    // not be read) arm the same mirror: cross-surface writes
+                    // do not care how the session was opened — `agent
+                    // --session`, a future channel binding, cron — and an
+                    // attached client should see them. Watermark 0: nothing
+                    // replayed, so nothing can double-emit. (Demo receipt:
+                    // session 9364d098 — CLI turn rows committed while no
+                    // watcher existed.)
+                    watch::spawn_mirror(&state, &st, &acp_id, 0);
                 }
                 let current = st.model.lock().await.clone();
                 let models = catalog::models_payload(&state.config, current.as_deref());
