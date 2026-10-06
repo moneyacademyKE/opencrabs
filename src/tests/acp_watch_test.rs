@@ -82,13 +82,10 @@ fn fresh_suffix_mirrors_through_the_replay_shapes() {
 }
 
 #[test]
-fn assistant_thinking_rides_along() {
+fn mirror_drops_thinking_ships_final_text_only() {
     let history = vec![done("assistant", "answer", 5, Some("pondering"))];
     let (updates, mark) = mirror_updates(&history, 4);
-    assert_eq!(
-        kinds(&updates),
-        vec!["agent_thought_chunk", "agent_message_chunk"]
-    );
+    assert_eq!(kinds(&updates), vec!["agent_message_chunk"]);
     assert_eq!(mark, 5);
 }
 
@@ -150,16 +147,9 @@ fn persisted_reasoning_row_mirrors_as_thought_plus_message() {
         .iter()
         .map(|u| u["sessionUpdate"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        kinds,
-        vec![
-            "user_message_chunk",
-            "agent_thought_chunk",
-            "agent_message_chunk"
-        ]
-    );
+    assert_eq!(kinds, vec!["user_message_chunk", "agent_message_chunk"]);
     assert!(
-        updates[2]["content"]["text"]
+        updates[1]["content"]["text"]
             .as_str()
             .unwrap()
             .contains("MIRROR-OK")
@@ -190,7 +180,7 @@ fn in_flight_assistant_row_is_held_until_filled() {
         .iter()
         .map(|u| u["sessionUpdate"].as_str().unwrap())
         .collect();
-    assert_eq!(kinds, vec!["agent_thought_chunk", "agent_message_chunk"]);
+    assert_eq!(kinds, vec!["agent_message_chunk"]);
     assert_eq!(mark, 2);
 }
 

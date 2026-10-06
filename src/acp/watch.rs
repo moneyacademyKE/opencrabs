@@ -106,7 +106,14 @@ pub fn mirror_updates_at(
         .unwrap_or(fresh.len());
     let settled = &fresh[..upto];
     let new_mark = settled.last().map_or(watermark, |m| m.sequence);
-    (protocol::replay_updates(settled), new_mark)
+    // Mirrors ship final text only (owner directive 2026-10-06): thought
+    // chunks belong to the client's own session/load replay, not to
+    // cross-surface sync.
+    let updates = protocol::replay_updates(settled)
+        .into_iter()
+        .filter(|u| u["sessionUpdate"].as_str() != Some("agent_thought_chunk"))
+        .collect();
+    (updates, new_mark)
 }
 
 /// Server-side entry point: spawn the mirror for a freshly loaded session,
