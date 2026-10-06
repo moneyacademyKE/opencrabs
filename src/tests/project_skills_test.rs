@@ -108,9 +108,16 @@ User-level deploy.
 /// Built-in skills still resolve when no project or user overlays exist.
 #[test]
 fn builtins_still_resolve_without_overlays() {
-    let skill = resolve_skill("security-audit");
-    assert!(skill.is_some());
-    assert_eq!(skill.unwrap().source, SkillSource::Builtin);
+    // Hermetic: a user who installed a skill named like a builtin (e.g. via
+    // `crab install`) must not flip this assertion on a real machine.
+    crate::config::profile::with_home_override(std::env::temp_dir().join(format!(
+        "oc-builtin-resolve-{}",
+        std::process::id()
+    )), || {
+        let skill = resolve_skill("security-audit");
+        assert!(skill.is_some());
+        assert_eq!(skill.unwrap().source, SkillSource::Builtin);
+    });
 }
 
 /// Multiple projects each contribute their own skills.
