@@ -131,18 +131,14 @@ pub async fn check_updates(home: &Path, index_url: &str) -> Vec<UpdateReport> {
     let records = match ledger::load(home) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!(
-                "[crab] warning: ledger unreadable ({e}); proceeding as if nothing is installed"
-            );
+            tracing::warn!(error = %e, "crab: ledger unreadable; proceeding as if nothing is installed");
             Vec::new()
         }
     };
     let market = match load_index(index_url).await {
         Ok(m) => m,
         Err(e) => {
-            eprintln!(
-                "[crab] warning: market index unreachable ({e}); judging each crab by its git source"
-            );
+            tracing::warn!(error = %e, "crab: market index unreachable; judging each crab by its git source");
             Vec::new()
         }
     };
