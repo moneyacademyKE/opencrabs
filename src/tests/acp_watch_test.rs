@@ -24,6 +24,21 @@ fn msg(role: &str, content: &str, seq: i32, thinking: Option<&str>) -> Message {
     }
 }
 
+/// A row whose turn completed: the store stamps `duration_secs` at turn end.
+fn done(role: &str, content: &str, seq: i32, thinking: Option<&str>) -> Message {
+    let mut m = msg(role, content, seq, thinking);
+    m.duration_secs = Some(1);
+    m
+}
+
+/// A row from before the duration stamp existed, or from a cancelled turn:
+/// never stamped, so it settles by age via the staleness guard.
+fn old_undated(content: &str, seq: i32) -> Message {
+    let mut m = msg("assistant", content, seq, None);
+    m.created_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    m
+}
+
 fn kinds(updates: &[Value]) -> Vec<&str> {
     updates
         .iter()
@@ -54,7 +69,7 @@ fn fresh_suffix_mirrors_through_the_replay_shapes() {
     let history = vec![
         msg("user", "seen", 1, None),
         msg("user", "from telegram", 2, None),
-        msg("assistant", "daemon replied", 3, None),
+        done("assistant", "daemon replied", 3, None),
     ];
     let (updates, mark) = mirror_updates(&history, 1);
     assert_eq!(
@@ -68,7 +83,7 @@ fn fresh_suffix_mirrors_through_the_replay_shapes() {
 
 #[test]
 fn assistant_thinking_rides_along() {
-    let history = vec![msg("assistant", "answer", 5, Some("pondering"))];
+    let history = vec![done("assistant", "answer", 5, Some("pondering"))];
     let (updates, mark) = mirror_updates(&history, 4);
     assert_eq!(
         kinds(&updates),
@@ -79,7 +94,7 @@ fn assistant_thinking_rides_along() {
 
 #[test]
 fn blank_rows_advance_the_watermark_without_chunks() {
-    let history = vec![msg("user", "", 8, None), msg("assistant", "real", 9, None)];
+    let history = vec![msg("user", "", 8, None), done("assistant", "real", 9, None)];
     let (updates, mark) = mirror_updates(&history, 7);
     assert_eq!(kinds(&updates), vec!["agent_message_chunk"]);
     assert_eq!(mark, 9, "the blank row is consumed, never re-offered");
@@ -102,7 +117,7 @@ fn probe_assistant_row_with_inline_reasoning_mirrors() {
     let content = "<!-- reasoning -->\nThe user wants me to reply with exactly: MIRROR-OK 247518\n\nSimple. Just reply exactly that.\n<!-- /reasoning -->\n\nMIRROR-OK 247518\n\n";
     let history = vec![
         msg("user", "Reply with exactly: MIRROR-OK 247518", 1, None),
-        msg("assistant", content, 2, None),
+        done("assistant", content, 2, None),
     ];
     let (updates, mark) = mirror_updates(&history, 0);
     println!("UPDATES={} kinds={:?}", updates.len(), kinds(&updates));
@@ -122,7 +137,7 @@ fn persisted_reasoning_row_mirrors_as_thought_plus_message() {
     // bytes from the database must mirror as thought + message.
     let rows = vec![
         msg("user", "Reply with exactly: MIRROR-OK 247518", 1, None),
-        msg(
+        done(
             "assistant",
             "<!-- reasoning -->\nThe user wants me to reply with exactly: MIRROR-OK 247518\n\nSimple. Just reply exactly that.\n<!-- /reasoning -->\n\nMIRROR-OK 247518\n\n",
             2,
@@ -166,8 +181,10 @@ fn in_flight_assistant_row_is_held_until_filled() {
     assert_eq!(updates.len(), 1, "only the user row may mirror mid-turn");
     assert_eq!(mark, 1, "watermark must stop before the unfinished row");
 
+    // Turn end fills the content AND stamps the duration.
     let mut filled = msg("assistant", "", 2, None);
     filled.content = "<!-- reasoning -->\nthink\n<!-- /reasoning -->\n\nthe answer".to_string();
+    filled.duration_secs = Some(9);
     let (updates, mark) = mirror_updates(&[msg("user", "do the thing", 1, None), filled], 1);
     let kinds: Vec<&str> = updates
         .iter()
@@ -218,4 +235,55 @@ fn settled_watermark_skips_a_trailing_in_flight_row() {
     let settled = vec![msg("user", "first", 1, None), done];
     assert_eq!(settled_watermark(&settled), 2);
     assert_eq!(settled_watermark(&[]), 0);
+}
+
+#[test]
+fn streamed_partial_content_is_held_until_turn_end() {
+    // The digest incident: Telegram's assistant row carries REAL content
+    // mid-turn (the store streams appends in place) while duration_secs
+    // stays NULL. Shipping it early burned the watermark and the tail —
+    // the actual digest — never reached MonoCode.
+    let (updates, mark) = mirror_updates(
+        &[
+            msg("user", "give me the digest", 1, None),
+            msg("assistant", "On it: pulling fresh headlines now.", 2, None),
+        ],
+        0,
+    );
+    assert_eq!(
+        kinds(&updates),
+        vec!["user_message_chunk"],
+        "mid-turn partial content must not mirror"
+    );
+    assert_eq!(mark, 1);
+
+    let mut finished = msg("assistant", "", 2, None);
+    finished.content =
+        "On it: pulling fresh headlines now.\n\n• headline one\n• headline two".to_string();
+    finished.duration_secs = Some(42);
+    let (updates, mark) =
+        mirror_updates(&[msg("user", "give me the digest", 1, None), finished], 1);
+    assert_eq!(kinds(&updates), vec!["agent_message_chunk"]);
+    assert!(
+        updates[0]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("headline two"),
+        "the final content arrives whole, exactly once"
+    );
+    assert_eq!(mark, 2);
+}
+
+#[test]
+fn legacy_undated_row_is_settled_by_age() {
+    // Rows written before duration_secs existed (and rows from cancelled
+    // turns) never receive the stamp; the staleness guard settles them so
+    // they mirror instead of pinning the window forever.
+    let old = old_undated("an old completed answer", 2);
+    let (updates, mark) = mirror_updates(&[msg("user", "q", 1, None), old], 0);
+    assert_eq!(
+        kinds(&updates),
+        vec!["user_message_chunk", "agent_message_chunk"]
+    );
+    assert_eq!(mark, 2);
 }

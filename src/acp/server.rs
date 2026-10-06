@@ -57,6 +57,7 @@ impl AcpServer {
             steer,
             default_model,
             config,
+            client_name: std::sync::Mutex::new(None),
         });
         Self { state, transport }
     }
@@ -85,10 +86,11 @@ impl AcpServer {
     async fn dispatch_request(state: Arc<ServerState>, id: Value, method: &str, params: Value) {
         match method {
             protocol::INITIALIZE => {
+                super::naming::capture_client(&state, &params);
                 state.handle.respond(id, protocol::initialize_result());
             }
             protocol::SESSION_NEW => {
-                Self::session_new(state, id, None).await;
+                Self::session_new(state, id, None, &params).await;
             }
             protocol::SESSION_LOAD => {
                 let session_id = params
@@ -96,7 +98,7 @@ impl AcpServer {
                     .and_then(Value::as_str)
                     .map(str::to_string);
                 match session_id {
-                    Some(sid) => Self::session_new(state, id, Some(&sid)).await,
+                    Some(sid) => Self::session_new(state, id, Some(&sid), &params).await,
                     None => state.handle.respond_error(
                         id,
                         protocol::INVALID_PARAMS,
@@ -163,10 +165,12 @@ impl AcpServer {
 
     /// `session/new` and `session/load` share one body: the resolver treats
     /// `None` as create and `Some(id)` as resume (prefix or full UUID). The
-    /// client's `cwd` is accepted and ignored: the process already runs in
-    /// its own working directory, so there is nothing to bind it to.
-    async fn session_new(state: Arc<ServerState>, id: Value, resume: Option<&str>) {
-        match resolve_or_create_session(&state.sessions, resume, "ACP").await {
+    /// client's `cwd` binds nothing (the process already runs in its own
+    /// directory) but seeds the birth title of new sessions.
+    async fn session_new(state: Arc<ServerState>, id: Value, resume: Option<&str>, params: &Value) {
+        let cwd = params.get("cwd").and_then(Value::as_str);
+        let birth = super::naming::birth_title_for(&state, cwd);
+        match resolve_or_create_session(&state.sessions, resume, &birth).await {
             Ok(session) => {
                 let acp_id = session.id.to_string();
                 let st = Arc::new(SessionState {
@@ -249,9 +253,10 @@ impl AcpServer {
                 let current = st.model.lock().await.clone();
                 let models = catalog::models_payload(&state.config, current.as_deref());
                 let modes = protocol::modes_payload(*st.mode.lock().await);
+                let title = session.title.clone();
                 state.handle.respond(
                     id,
-                    json!({ "sessionId": acp_id, "models": models, "modes": modes }),
+                    json!({ "sessionId": acp_id, "title": title, "models": models, "modes": modes }),
                 );
                 // Slash-command discovery pushes after the response so the
                 // client's picker fills in as soon as the session exists.

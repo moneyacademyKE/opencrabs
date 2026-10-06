@@ -11,10 +11,15 @@
 //! not token streaming: token parity would need a daemon→child event bus,
 //! which does not exist. That is the honest ceiling of this design.
 //!
-//! Rows are not insert-once: the store creates the assistant row empty at
-//! turn start and fills it IN PLACE at turn end, so the fresh window stops
-//! before any unfinished row (see [`is_in_flight`]) instead of burning the
-//! watermark past an answer that hasn't been written yet.
+//! Rows are not insert-once: the store creates the assistant row at turn
+//! start and STREAMS content into it in place (`content = content || ?` per
+//! partial update), stamping `duration_secs` only at turn end. So "has
+//! content" does not mean finished — a mirror that ships the first partial
+//! update burns the watermark past the rest of the answer (moe's lost
+//! digest: Telegram showed the full reply, MonoCode got only the preamble).
+//! The fresh window stops before any row lacking its duration stamp (see
+//! [`is_in_flight`]), and a staleness guard settles rows from cancelled or
+//! crashed turns that never receive one.
 //!
 //! Echo suppression: rows written by the ACP child's OWN turn already
 //! reached the client live through the turn bridge, so re-emitting them
@@ -26,6 +31,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -39,28 +45,38 @@ use crate::services::MessageService;
 /// indexed read per watched session, so 2s is cheap and feels live.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// An assistant row the writer hasn't finished. The store creates the row
-/// at turn START (empty content, `created_at` matching the triggering user
-/// row) and updates it IN PLACE at turn end, so this shape is mid-write:
-/// mirroring it now replays nothing and burns the watermark past the
-/// answer, losing it forever (probe receipt: session 2f3f3a3c, one
-/// `emit updates=1 wm 0->2` then permanent silence). `duration_secs` is
-/// stamped with the final content, so its presence marks the row complete
-/// even when a turn produced no visible text.
-fn is_in_flight(m: &Message) -> bool {
+/// An assistant row is abandoned (cancelled turn, crashed writer) once it
+/// has gone this long without a duration stamp; at that point the mirror
+/// treats it as settled rather than pinning the window forever. Generous
+/// on purpose: a too-small window's only cost is mirroring a long turn's
+/// partial content early, and its completion then re-emits nothing.
+pub const STALE_TURN_SECS: i64 = 900;
+
+/// An assistant row whose turn is still writing. The store streams content
+/// into the row in place and stamps `duration_secs` only at turn end, so a
+/// row WITH content but NO duration is mid-write — mirroring it now ships
+/// the preamble and burns the watermark past the rest of the answer
+/// (moe's digest: Telegram got the full text, MonoCode got one sentence).
+/// Rows older than the staleness guard (cancelled turns, and the legacy
+/// rows written before the stamp existed) are treated as settled.
+pub fn is_in_flight(m: &Message, now: DateTime<Utc>) -> bool {
     m.role == "assistant"
-        && m.content.trim().is_empty()
-        && m.thinking.is_none()
         && m.duration_secs.is_none()
+        && (now - m.created_at).num_seconds() < STALE_TURN_SECS
 }
 
 /// The last sequence a mirror may treat as settled: history minus any
 /// window starting at an in-flight assistant row. Seeds the load path and
 /// bounds every poll.
 pub fn settled_watermark(history: &[Message]) -> i32 {
+    settled_watermark_at(history, Utc::now())
+}
+
+/// Clock-explicit variant for tests and callers that already have one.
+pub fn settled_watermark_at(history: &[Message], now: DateTime<Utc>) -> i32 {
     let upto = history
         .iter()
-        .position(is_in_flight)
+        .position(|m| is_in_flight(m, now))
         .unwrap_or(history.len());
     history[..upto].last().map_or(0, |m| m.sequence)
 }
@@ -73,9 +89,21 @@ pub fn settled_watermark(history: &[Message]) -> i32 {
 /// rows behind an unfinished one stay pending so everything emits in
 /// order, exactly once, when the writer completes.
 pub fn mirror_updates(history: &[Message], watermark: i32) -> (Vec<Value>, i32) {
+    mirror_updates_at(history, watermark, Utc::now())
+}
+
+/// Clock-explicit variant for tests and the daemon-side watcher.
+pub fn mirror_updates_at(
+    history: &[Message],
+    watermark: i32,
+    now: DateTime<Utc>,
+) -> (Vec<Value>, i32) {
     let idx = history.partition_point(|m| m.sequence <= watermark);
     let fresh = &history[idx..];
-    let upto = fresh.iter().position(is_in_flight).unwrap_or(fresh.len());
+    let upto = fresh
+        .iter()
+        .position(|m| is_in_flight(m, now))
+        .unwrap_or(fresh.len());
     let settled = &fresh[..upto];
     let new_mark = settled.last().map_or(watermark, |m| m.sequence);
     (protocol::replay_updates(settled), new_mark)

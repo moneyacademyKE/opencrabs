@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -49,4 +50,7 @@ pub struct ServerState {
     pub steer: SteerMap,
     pub default_model: Option<String>,
     pub config: Arc<crate::config::Config>,
+    /// Client self-identification captured at `initialize`
+    /// (`clientInfo.name`), used to compose descriptive birth titles.
+    pub client_name: StdMutex<Option<String>>,
 }

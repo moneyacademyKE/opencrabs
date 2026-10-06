@@ -23,6 +23,7 @@ pub(crate) mod member_events;
 pub(crate) mod menu_auto;
 pub(crate) mod menu_refresh;
 pub(crate) mod menu_scope;
+pub(crate) mod mirror;
 pub(crate) mod outbound_dedup;
 pub(crate) mod picker_limits;
 pub(crate) mod plan_card;

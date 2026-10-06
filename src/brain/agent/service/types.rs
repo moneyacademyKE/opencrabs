@@ -584,6 +584,15 @@ impl AgentService {
             return rest.starts_with('#');
         }
 
+        // ACP sessions: legacy bare "ACP" (pre-naming-module) and the
+        // "ACP: <client>[ · <dir>]" birth shape. The attempted flag — not
+        // the shape — stops re-firing, so a broad prefix match is safe: a
+        // user-renamed "ACP: …" upgrades at most once, and only if never
+        // auto-titled.
+        if title == "ACP" || title.starts_with("ACP: ") {
+            return true;
+        }
+
         // WhatsApp and Trello: no clear default pattern marker, skip auto-title
         // to prevent repeated firing. Users can manually rename if needed.
 
@@ -597,6 +606,7 @@ impl AgentService {
             "Telegram: ",
             "Discord: ",
             "Slack: ",
+            "ACP: ",
             "WhatsApp: ",
             "Trello: ",
         ];
