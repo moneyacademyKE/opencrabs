@@ -271,6 +271,31 @@ impl ChannelManager {
                             }
                         }
                     });
+
+                    // Daemon-side mirror: sessions bound to topics can also be
+                    // driven from MonoCode (ACP) or the CLI. Those rows never
+                    // reach the topic on their own — the daemon only posts
+                    // turns it runs — so the watcher polls and posts them
+                    // (moe typed in MonoCode, the Telegram thread stayed
+                    // silent; 2026-10-06).
+                    {
+                        let mirror_state = self.telegram_state.clone();
+                        let mirror_messages = crate::services::MessageService::new(
+                            self.channel_factory.service_context(),
+                        );
+                        let mirror_bindings =
+                            crate::db::SessionBindingRepository::new(self.db_pool.clone());
+                        let mirror_cancel = tokio_util::sync::CancellationToken::new();
+                        tokio::spawn(async move {
+                            crate::channels::telegram::mirror::run_telegram_mirror(
+                                mirror_state,
+                                mirror_messages,
+                                mirror_bindings,
+                                mirror_cancel,
+                            )
+                            .await;
+                        });
+                    }
                 }
             }
             ChannelAction::Stop => {

@@ -90,6 +90,37 @@ impl MessageRepository {
         Ok(messages)
     }
 
+    /// Messages for a session strictly AFTER `sequence`, oldest-first.
+    ///
+    /// The polling mirrors (ACP cross-surface, Telegram daemon-side) read
+    /// the same session every few seconds; an indexed range read keeps that
+    /// to the unseen suffix instead of reloading full history per tick.
+    pub async fn find_after_sequence(
+        &self,
+        session_id: Uuid,
+        after_sequence: i32,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        let sid = session_id.to_string();
+        let limit = limit as i64;
+        self.pool
+            .get()
+            .await
+            .context("Failed to get connection")?
+            .interact(move |conn| {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT * FROM messages WHERE session_id = ?1 AND sequence > ?2 \
+                     ORDER BY sequence ASC LIMIT ?3",
+                )?;
+                let rows =
+                    stmt.query_map(params![sid, after_sequence, limit], Message::from_row)?;
+                rows.collect::<std::result::Result<Vec<_>, _>>()
+            })
+            .await
+            .map_err(interact_err)?
+            .context("Failed to find messages after sequence")
+    }
+
     /// Create a new message
     pub async fn create(&self, message: &Message) -> Result<()> {
         let m = message.clone();

@@ -59,6 +59,7 @@ impl AcpServer {
             steer,
             default_model,
             config,
+            client_name: std::sync::Mutex::new(None),
         });
         Self { state, transport }
     }
@@ -87,10 +88,11 @@ impl AcpServer {
     async fn dispatch_request(state: Arc<ServerState>, id: Value, method: &str, params: Value) {
         match method {
             protocol::INITIALIZE => {
+                super::naming::capture_client(&state, &params);
                 state.handle.respond(id, protocol::initialize_result());
             }
             protocol::SESSION_NEW => {
-                Self::session_new(state, id, None, false).await;
+                Self::session_new(state, id, None, false, &params).await;
             }
             protocol::SESSION_LOAD => {
                 let session_id = params
@@ -100,7 +102,7 @@ impl AcpServer {
                 match session_id {
                     // `session/load` is the replaying half: the transcript is
                     // streamed as session/update frames before the response.
-                    Some(sid) => Self::session_new(state, id, Some(&sid), true).await,
+                    Some(sid) => Self::session_new(state, id, Some(&sid), true, &params).await,
                     None => state.handle.respond_error(
                         id,
                         protocol::INVALID_PARAMS,
@@ -120,7 +122,7 @@ impl AcpServer {
                     // `session/resume` is the non-replaying half, per the schema
                     // ("without returning previous messages (unlike
                     // session/load)"), and its response has no sessionId field.
-                    Some(sid) => Self::session_new(state, id, Some(&sid), false).await,
+                    Some(sid) => Self::session_new(state, id, Some(&sid), false, &params).await,
                     None => state.handle.respond_error(
                         id,
                         protocol::INVALID_PARAMS,
@@ -201,11 +203,19 @@ impl AcpServer {
     /// resolver treats `None` as create and `Some(id)` as an existing session
     /// (prefix or full UUID). `replay` is the only difference between the two
     /// resume spellings: v1 says `session/load` replays the transcript and
-    /// `session/resume` must not (#1815 F5). The client's `cwd` is accepted and
-    /// ignored: the process already runs in its own working directory, so there
-    /// is nothing to bind it to.
-    async fn session_new(state: Arc<ServerState>, id: Value, resume: Option<&str>, replay: bool) {
-        match resolve_or_create_session(&state.sessions, resume, "ACP").await {
+    /// `session/resume` must not (#1815 F5). The client's `cwd` binds nothing
+    /// (the process already runs in its own directory) but seeds the birth
+    /// title of new sessions.
+    async fn session_new(
+        state: Arc<ServerState>,
+        id: Value,
+        resume: Option<&str>,
+        replay: bool,
+        params: &Value,
+    ) {
+        let cwd = params.get("cwd").and_then(Value::as_str);
+        let birth = super::naming::birth_title_for(&state, cwd);
+        match resolve_or_create_session(&state.sessions, resume, &birth).await {
             Ok(session) => {
                 let acp_id = session.id.to_string();
                 let st = Arc::new(SessionState {
@@ -293,16 +303,17 @@ impl AcpServer {
                 let modes = protocol::modes_payload(*st.mode.lock().await);
                 // A resumed session reached us through session/load, and
                 // LoadSessionResponse has no sessionId field to echo (#1815 F4).
-                state.handle.respond(
-                    id,
-                    protocol::session_response(
-                        &acp_id,
-                        models,
-                        modes,
-                        config_options,
-                        resume.is_none(),
-                    ),
+                // The `title` field is ours: clients (MonoCode) render the
+                // live DB title, so a renamed session shows its real name.
+                let mut response = protocol::session_response(
+                    &acp_id,
+                    models,
+                    modes,
+                    config_options,
+                    resume.is_none(),
                 );
+                response["title"] = json!(session.title);
+                state.handle.respond(id, response);
                 // Slash-command discovery pushes after the response so the
                 // client's picker fills in as soon as the session exists.
                 let commands = catalog::commands_payload();

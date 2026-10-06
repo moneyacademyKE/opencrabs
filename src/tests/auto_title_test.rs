@@ -182,10 +182,51 @@ mod is_default_channel_title {
     fn new_chat_is_default() {
         assert!(AgentService::is_default_channel_title("New Chat"));
     }
+
+    #[test]
+    fn acp_legacy_bare_title() {
+        // ACP sessions before the naming module were born as bare "ACP":
+        // upgrade them on their next turn instead of leaving them anonymous.
+        assert!(AgentService::is_default_channel_title("ACP"));
+    }
+
+    #[test]
+    fn acp_birth_titles() {
+        assert!(AgentService::is_default_channel_title(
+            "ACP: MonoCode · monocode"
+        ));
+        assert!(AgentService::is_default_channel_title("ACP: Zed"));
+        assert!(AgentService::is_default_channel_title("ACP: blog"));
+    }
+
+    #[test]
+    fn acp_lookalikes_are_not_default() {
+        // No "ACP: " prefix: user titles that merely mention ACP.
+        assert!(!AgentService::is_default_channel_title(
+            "ACP client meeting"
+        ));
+        assert!(!AgentService::is_default_channel_title("My ACP notes"));
+        assert!(!AgentService::is_default_channel_title("acp: lowercase"));
+    }
 }
 
 mod extract_channel_prefix {
     use super::*;
+
+    #[test]
+    fn acp_prefix() {
+        // The surface marker survives auto-titling, like channel prefixes.
+        assert_eq!(
+            AgentService::extract_channel_prefix("ACP: MonoCode · monocode"),
+            "ACP: "
+        );
+        assert_eq!(
+            AgentService::extract_channel_prefix("ACP: Fix login bug"),
+            "ACP: "
+        );
+        // Legacy bare titles have no prefix to preserve.
+        assert_eq!(AgentService::extract_channel_prefix("ACP"), "");
+    }
 
     #[test]
     fn telegram_prefix() {

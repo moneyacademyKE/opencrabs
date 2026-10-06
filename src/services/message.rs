@@ -99,6 +99,20 @@ impl MessageService {
             .context("Failed to list messages for session")
     }
 
+    /// Messages strictly after a sequence number — the incremental read the
+    /// polling mirrors use per tick (see `MessageRepository::find_after_sequence`).
+    pub async fn list_messages_after_sequence(
+        &self,
+        session_id: Uuid,
+        after_sequence: i32,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        let repo = MessageRepository::new(self.context.pool());
+        repo.find_after_sequence(session_id, after_sequence, limit)
+            .await
+            .context("Failed to list messages after sequence")
+    }
+
     /// Update a message
     pub async fn update_message(&self, message: &Message) -> Result<()> {
         let repo = MessageRepository::new(self.context.pool());

@@ -27,6 +27,7 @@ pub mod a2a_session_notify_test;
 pub mod a2a_transport_cause_test;
 pub mod a2a_types_test;
 pub mod acp_catalog_test;
+pub mod acp_naming_test;
 pub mod acp_onboard_intercept_test;
 pub mod acp_plan_tool_name_1815_test;
 pub mod acp_protocol_test;
@@ -499,6 +500,7 @@ pub mod telegram_intermediate_status_report_test;
 pub mod telegram_mentions_other_bot_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_menu_scope_test;
+pub mod telegram_mirror_test;
 #[cfg(feature = "telegram")]
 pub mod telegram_push_target_test;
 #[cfg(feature = "telegram")]
