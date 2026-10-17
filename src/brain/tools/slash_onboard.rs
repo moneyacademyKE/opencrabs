@@ -59,14 +59,16 @@ pub(crate) fn dispatch(sub: &str, args: &str) -> Result<ToolResult> {
                 .into(),
         )),
         "workspace" | "daemon" => Ok(ToolResult::success(
-            "Workspace and daemon setup are interactive desktop-app screens — nothing to \
-             configure from a chat client. The rest works here: /onboard:channels, \
-             /onboard:voice, /onboard:image, and /models for providers."
+            "Workspace and daemon setup (/workspace, /daemon) are interactive \
+             desktop-app screens — TUI-only, nothing to configure from a chat \
+             client. The rest works here: /onboard:channels, /onboard:voice, \
+             /onboard:image, and /models for providers."
                 .into(),
         )),
         other => Ok(ToolResult::error(format!(
-            "Unknown onboarding step '{other}'. Steps that work from chat: image, voice, \
-             channels; provider → /models; workspace, daemon, brain → desktop app."
+            "Unknown onboarding step '{other}'. Steps that work from chat: \
+             /image, /voice, /channels; provider → /models; workspace, daemon, \
+             brain → desktop app."
         ))),
     }
 }

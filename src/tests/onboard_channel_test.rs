@@ -174,6 +174,6 @@ fn unknown_step_message_names_the_guidance_arms() {
     let r = dispatch("frobnicate", "").unwrap();
     assert!(!r.success);
     let err = r.error.unwrap();
-    assert!(err.contains("image, voice, channels"), "{err}");
+    assert!(err.contains("/image, /voice, /channels"), "{err}");
     assert!(err.contains("/models"), "{err}");
 }
