@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OpenCrabs</title>
+<link rel="stylesheet" href="/a2a/app/style.css">
+</head>
+<body>
+
+<main id="login" class="view" hidden>
+  <div class="card">
+    <h1>🦀 OpenCrabs</h1>
+    <p class="sub">Remote · paired by code</p>
+    <label for="code">Pairing code</label>
+    <input id="code" autocomplete="off" autocapitalize="characters"
+           spellcheck="false" placeholder="8 characters" maxlength="12">
+    <label for="label">Label <span class="dim">(optional)</span></label>
+    <input id="label" value="miniapp" autocomplete="off">
+    <button id="pair-btn">Pair</button>
+    <p id="login-err" class="err" hidden></p>
+    <p class="hint">Codes are minted on the host with
+      <code>opencrabs connect</code> — single-use, five minutes.</p>
+  </div>
+</main>
+
+<main id="app" class="view" hidden>
+  <header>
+    <span class="dot" id="dot"></span>
+    <span id="host-label">gateway</span>
+    <span class="spacer"></span>
+    <button id="logout" class="ghost">unpair</button>
+  </header>
+  <section id="tasks"></section>
+  <footer>
+    <textarea id="composer" rows="2" placeholder="Send a message…"></textarea>
+    <button id="send">Send</button>
+  </footer>
+  <p id="app-err" class="err" hidden></p>
+</main>
+
+<script src="/a2a/app/app.js"></script>
+</body>
+</html>

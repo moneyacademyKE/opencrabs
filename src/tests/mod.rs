@@ -396,6 +396,7 @@ pub mod menu_auto_solo_test;
 pub mod menu_refresh_test;
 pub mod message_split_markup_test;
 pub mod mimo_tool_call_hint_test;
+pub mod miniapp_test;
 pub mod mission_control_command_test;
 pub mod mission_control_report_test;
 pub mod model_display_label_test;

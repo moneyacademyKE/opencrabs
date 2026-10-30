@@ -5,6 +5,7 @@
 //! - `POST /a2a/v1`                 — JSON-RPC 2.0 endpoint (scoped)
 //! - `POST /a2a/pair`               — One-time code → scoped session token
 //! - `GET  /a2a/health`             — Health check
+//! - `GET  /a2a/app`                — Mini App shell (same-origin SPA)
 
 use crate::a2a::{agent_card, handler, pairing_http, routes_http, types::*};
 use crate::brain::agent::service::AgentService;
@@ -159,6 +160,9 @@ pub fn build_router(state: A2aState, allowed_origins: &[String]) -> Router {
         .route("/.well-known/agent.json", get(get_agent_card))
         .route("/a2a/health", get(health_check))
         .route("/a2a/pair", post(pairing_http::handle_pair))
+        .route("/a2a/app", get(crate::remote::miniapp::serve_index))
+        .route("/a2a/app/app.js", get(crate::remote::miniapp::serve_js))
+        .route("/a2a/app/style.css", get(crate::remote::miniapp::serve_css))
         .merge(protected)
         .layer(cors)
         .with_state(state)
