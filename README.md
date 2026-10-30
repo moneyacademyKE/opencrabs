@@ -2131,6 +2131,16 @@ opencrabs routes clear [<host-id>]
 
 `a2a_send` resolves its target through this table: with 2+ routes to a host it races them (health probes only — a mutation is sent exactly once, to the winner), orders by EWMA latency, gives recently-failed routes a 1-second leash instead of 3, and `discover` harvests fresh announcements. With an empty table everything behaves exactly as before.
 
+### Mini App — the gateway's own web face
+
+The daemon serves a dependency-free web app at `GET /a2a/app` — same origin as the API, so no CORS setup and no extra infrastructure. Open `https://<gateway>/a2a/app` in any browser on a device that can reach the gateway (tailnet, LAN, or tunnel):
+
+1. Mint a pairing code on the host: `opencrabs connect` (or any code-minting path you already use).
+2. Enter the code in the app's login screen — it exchanges it at `POST /a2a/pair` for a scoped session token (kept in `sessionStorage`).
+3. Send messages and watch tasks — the app speaks the same JSON-RPC (`message/send`, `tasks/get`) through the same Bearer gate as every other client.
+
+The shell itself is public like `/a2a/health` (it embeds no secrets); everything interesting stays behind the Bearer gate. Assets are embedded in the binary, so the app updates exactly when the daemon does.
+
 ---
 
 ## 🚀 Quick Start
