@@ -337,6 +337,13 @@ pub struct A2aConfig {
     /// If unset, no authentication is required (suitable for loopback-only use).
     #[serde(default)]
     pub api_key: Option<String>,
+
+    /// Telegram user ids allowed through the Mini App `initData` door
+    /// (`POST /a2a/telegram/init-data`). Default empty = the door is
+    /// CLOSED; only listed ids can trade a signed Telegram launch payload
+    /// for a session token.
+    #[serde(default)]
+    pub telegram_users: Vec<i64>,
 }
 
 fn default_a2a_bind() -> String {
@@ -356,6 +363,7 @@ impl Default for A2aConfig {
             allowed_origins: vec![],
             advertise_url: None,
             api_key: None,
+            telegram_users: vec![],
         }
     }
 }

@@ -63,7 +63,8 @@ pub struct PairResponse {
 /// Fixed-window rate-limit bump. `Ok(remaining)` when allowed,
 /// `Err(retry_after_secs)` when the window budget is spent. Pure over the
 /// map + clock values so tests drive it without sleeping.
-fn bump(map: &mut HashMap<String, (u64, u32)>, key: &str, now_secs: u64) -> Result<u32, u64> {
+/// Public: the initData door shares this limiter (prefixed keys).
+pub fn bump(map: &mut HashMap<String, (u64, u32)>, key: &str, now_secs: u64) -> Result<u32, u64> {
     let now_min = now_secs / 60;
     let entry = map.entry(key.to_string()).or_insert((now_min, 0));
     if entry.0 != now_min {
@@ -147,7 +148,8 @@ pub async fn handle_pair(
     }
 }
 
-fn rate_limited(retry_after_secs: u64, message: &str) -> Response {
+/// Public: the initData door reuses this shape.
+pub fn rate_limited(retry_after_secs: u64, message: &str) -> Response {
     (
         StatusCode::TOO_MANY_REQUESTS,
         [("retry-after", retry_after_secs.to_string())],

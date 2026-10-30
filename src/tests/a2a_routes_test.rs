@@ -29,6 +29,8 @@ async fn state_with(api_key: Option<&str>, dir: &Path) -> A2aState {
         pairing: PairingStore::new(dir.join("pairing.json")),
         pair_hits: new_pair_hits(),
         remote_state_dir: dir.to_path_buf(),
+        telegram_token: None,
+        telegram_users: Vec::new(),
     }
 }
 

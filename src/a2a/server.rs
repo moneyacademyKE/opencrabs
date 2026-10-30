@@ -43,6 +43,12 @@ pub struct A2aState {
     /// Where remote state lives (host_id, tunnel.json, routes.json).
     /// Production: `<opencrabs_home>/state/remote`. Injected for tests.
     pub remote_state_dir: std::path::PathBuf,
+    /// Telegram bot token (from keys.toml). Enables the Mini App
+    /// `initData` door; None keeps it closed.
+    pub telegram_token: Option<String>,
+    /// Telegram user ids allowed through the `initData` door.
+    /// Empty (default) = closed, fail-closed by design.
+    pub telegram_users: Vec<i64>,
 }
 
 /// The scopes a request's credential carries, attached by `require_bearer`
@@ -160,6 +166,10 @@ pub fn build_router(state: A2aState, allowed_origins: &[String]) -> Router {
         .route("/.well-known/agent.json", get(get_agent_card))
         .route("/a2a/health", get(health_check))
         .route("/a2a/pair", post(pairing_http::handle_pair))
+        .route(
+            "/a2a/telegram/init-data",
+            post(crate::remote::telegram_auth::handle_init_data),
+        )
         .route("/a2a/app", get(crate::remote::miniapp::serve_index))
         .route("/a2a/app/app.js", get(crate::remote::miniapp::serve_js))
         .route("/a2a/app/style.css", get(crate::remote::miniapp::serve_css))
@@ -262,6 +272,8 @@ pub async fn start_server(
         pairing: PairingStore::new(PairingStore::default_path()),
         pair_hits: pairing_http::new_pair_hits(),
         remote_state_dir: crate::remote::tunnel::default_state_dir(),
+        telegram_token: crate::remote::telegram_auth::load_bot_token(),
+        telegram_users: config.telegram_users.clone(),
     };
 
     let app = build_router(state, &config.allowed_origins);

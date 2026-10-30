@@ -22,6 +22,8 @@ async fn test_state() -> A2aState {
         pair_hits: crate::a2a::pairing_http::new_pair_hits(),
         remote_state_dir: std::env::temp_dir()
             .join(format!("oc-a2a-test-remote-{}", std::process::id())),
+        telegram_token: None,
+        telegram_users: Vec::new(),
     }
 }
 
@@ -59,6 +61,7 @@ async fn start_server_signals_readiness_once_bound() {
         bind: "127.0.0.1".into(),
         port: 0,
         allowed_origins: vec![],
+        telegram_users: vec![],
         advertise_url: None,
         api_key: None,
     };
@@ -90,6 +93,7 @@ async fn start_server_signals_refusal_on_gate_failure() {
         bind: "0.0.0.0".into(),
         port: 0,
         allowed_origins: vec![],
+        telegram_users: vec![],
         advertise_url: None,
         api_key: None,
     };
@@ -118,6 +122,7 @@ async fn start_server_signals_ready_when_disabled() {
         bind: "127.0.0.1".into(),
         port: 0,
         allowed_origins: vec![],
+        telegram_users: vec![],
         advertise_url: None,
         api_key: None,
     };

@@ -203,6 +203,32 @@ function short(id) {
   return id.length > 10 ? id.slice(0, 10) + "…" : id;
 }
 
+// ── telegram initData auto-login ───────────────────────────────────────
+// Inside Telegram's webview, window.Telegram.WebApp.initData is a
+// launch payload signed with the bot's own token. The gateway verifies
+// that signature (POST /a2a/telegram/init-data) and, if the user is on
+// [a2a].telegram_users, hands back a session token — no code typing.
+async function tryInitData() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (!tg || !tg.initData) return false;
+  try {
+    const res = await fetch("/a2a/telegram/init-data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ init_data: tg.initData, label: "miniapp" }),
+    });
+    if (!res.ok) return false;
+    const body = await res.json();
+    token = body.token;
+    scopes = body.scopes || [];
+    sessionStorage.setItem("oc_token", token);
+    sessionStorage.setItem("oc_scopes", JSON.stringify(scopes));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── wire up ────────────────────────────────────────────────────────────
 $("pair-btn").addEventListener("click", pair);
 $("code").addEventListener("keydown", (e) => {
@@ -216,5 +242,8 @@ $("composer").addEventListener("keydown", (e) => {
     send();
   }
 });
-if (token) enter();
-else show("login");
+(async () => {
+  if (token) enter();
+  else if (await tryInitData()) enter();
+  else show("login");
+})();

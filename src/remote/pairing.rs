@@ -232,6 +232,34 @@ impl PairingStore {
         Ok(code)
     }
 
+    /// Issue a session directly, without a pairing code — for trust paths
+    /// that authenticated the caller out-of-band (Telegram Mini App
+    /// `initData` validation). Same tokens, same store, same revocation.
+    /// Not subject to the pairing lockout: the caller proved itself
+    /// cryptographically, so there is no fail-streak to count.
+    pub fn issue_session(&self, label: &str, scopes: Vec<String>) -> Result<(String, Session)> {
+        let label = sanitize_label(label);
+        let now = now_secs();
+        self.with_locked_store(|st| {
+            let token = format!(
+                "{TOKEN_PREFIX}{}",
+                URL_SAFE_NO_PAD.encode(random_bytes::<32>())
+            );
+            let token_hash = sha_b64(&token);
+            let session = Session {
+                id: token_hash[..12].to_string(),
+                token_hash,
+                label,
+                scopes,
+                created_at: now,
+                expires_at: now + TOKEN_TTL_SECS,
+                revoked_at: None,
+            };
+            st.sessions.push(session.clone());
+            Ok((token, session))
+        })
+    }
+
     /// Verify a presented code; on success consume it and issue a session.
     /// Wrong guesses don't reveal which codes exist: every failure is
     /// `NoMatch`, and a global fail streak eventually locks pairing.

@@ -13,6 +13,7 @@ pub mod route_client;
 pub mod route_store;
 pub mod routes;
 pub mod scopes;
+pub mod telegram_auth;
 pub mod tunnel;
 
 /// Unix seconds. Shared clock read for pairing + tunnel state files.
