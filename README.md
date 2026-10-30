@@ -2141,6 +2141,21 @@ The daemon serves a dependency-free web app at `GET /a2a/app` — same origin as
 
 The shell itself is public like `/a2a/health` (it embeds no secrets); everything interesting stays behind the Bearer gate. Assets are embedded in the binary, so the app updates exactly when the daemon does.
 
+**Zero-tap login for you (Telegram `initData`)** — add your Telegram user id to the allowlist:
+
+```toml
+[a2a]
+telegram_users = [123456789]   # your numeric Telegram id
+```
+
+Inside Telegram's webview the app then logs itself in: it sends the launch
+payload to `POST /a2a/telegram/init-data`, the gateway verifies Telegram's
+HMAC-SHA256 signature (key derived from the bot token, 24h freshness window),
+checks the allowlist, and mints a normal scoped session token. The allowlist
+**defaults to empty — the door ships closed**; unlisted users still use pairing
+codes. (Find your id by messaging `@userinfobot`, or read it from any
+`initData` debug payload.)
+
 ---
 
 ## 🚀 Quick Start
