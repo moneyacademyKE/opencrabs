@@ -1,0 +1,82 @@
+name: Patched binary (branch build)
+
+# Build-only helper for the telegram-command-parity branch on a fork.
+# NOT part of upstream CI and not intended to be merged: it exists so a real
+# Windows binary plus executed test receipts come out of a machine whose local
+# MSVC/Windows-SDK install is broken. Mirrors the windows-build job in ci.yml.
+on:
+  push:
+    branches:
+      - telegram-command-parity-015
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build + test (windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install Rust (from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: 1.98.1
+          components: rustfmt, clippy
+
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      - name: Install CMake (Windows)
+        uses: lukka/get-cmake@a89e43e22a96abafcd7a62db652a65ecd33052c9 # v4.4.4
+        with:
+          cmakeVersion: "4.4.4"
+
+      - name: Install NASM (Windows)
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1
+
+      - name: Build
+        shell: bash
+        env:
+          AWS_LC_SYS_CMAKE_BUILDER: '1'
+        run: cargo build --locked --profile ci --target x86_64-pc-windows-msvc --all-features
+
+      - name: Smoke — the binary starts
+        shell: bash
+        run: |
+          set +e
+          ver=$(./target/x86_64-pc-windows-msvc/ci/opencrabs.exe --version 2>&1)
+          status=$?
+          set -e
+          echo "exit=$status version=$ver"
+          [ "$status" -eq 0 ] || exit 1
+          echo "$ver" | grep -qi opencrabs
+
+      - name: Test — telegram command parity
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --profile ci --target x86_64-pc-windows-msvc \
+            --lib -- tests::telegram_command_parity_test 2>&1 | tee parity.log
+
+      - name: Test — existing channel command suite
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked --profile ci --target x86_64-pc-windows-msvc \
+            --lib -- tests::channel_commands_test 2>&1 | tee channel_commands.log
+
+      - name: Upload binary + test logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencrabs-windows-patched
+          path: |
+            target/x86_64-pc-windows-msvc/ci/opencrabs.exe
+            parity.log
+            channel_commands.log
+          if-no-files-found: error
+          retention-days: 7
