@@ -6,8 +6,11 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TERMINAL = ["completed", "failed", "canceled", "rejected"];
 
-let token = sessionStorage.getItem("oc_token");
-let scopes = JSON.parse(sessionStorage.getItem("oc_scopes") || "[]");
+// localStorage, not sessionStorage: Telegram's webview discards sessionStorage
+// when the app is backgrounded — the session must match the 30-day token TTL,
+// or a spent pairing code looks "expired" on the next visit.
+let token = localStorage.getItem("oc_token");
+let scopes = JSON.parse(localStorage.getItem("oc_scopes") || "[]");
 const tasks = [];
 
 // ── views ──────────────────────────────────────────────────────────────
@@ -46,8 +49,8 @@ async function pair() {
     const body = await res.json();
     token = body.token;
     scopes = body.scopes || [];
-    sessionStorage.setItem("oc_token", token);
-    sessionStorage.setItem("oc_scopes", JSON.stringify(scopes));
+    localStorage.setItem("oc_token", token);
+    localStorage.setItem("oc_scopes", JSON.stringify(scopes));
     enter();
   } catch (e) {
     say("login-err", e.message);
@@ -59,8 +62,8 @@ async function pair() {
 function logout() {
   token = null;
   scopes = [];
-  sessionStorage.removeItem("oc_token");
-  sessionStorage.removeItem("oc_scopes");
+  localStorage.removeItem("oc_token");
+  localStorage.removeItem("oc_scopes");
   tasks.length = 0;
   $("tasks").innerHTML = "";
   show("login");
@@ -221,8 +224,8 @@ async function tryInitData() {
     const body = await res.json();
     token = body.token;
     scopes = body.scopes || [];
-    sessionStorage.setItem("oc_token", token);
-    sessionStorage.setItem("oc_scopes", JSON.stringify(scopes));
+    localStorage.setItem("oc_token", token);
+    localStorage.setItem("oc_scopes", JSON.stringify(scopes));
     return true;
   } catch {
     return false;
