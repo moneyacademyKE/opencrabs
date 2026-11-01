@@ -5,6 +5,7 @@
 //! - `POST /a2a/v1`                 — JSON-RPC 2.0 endpoint (scoped)
 //! - `POST /a2a/pair`               — One-time code → scoped session token
 //! - `GET  /a2a/health`             — Health check
+//! - `GET  /`                       — redirect to the Mini App
 //! - `GET  /a2a/app`                — Mini App shell (same-origin SPA)
 
 use crate::a2a::{agent_card, handler, pairing_http, routes_http, types::*};
@@ -170,6 +171,7 @@ pub fn build_router(state: A2aState, allowed_origins: &[String]) -> Router {
             "/a2a/telegram/init-data",
             post(crate::remote::telegram_auth::handle_init_data),
         )
+        .route("/", get(crate::remote::miniapp::root_redirect))
         .route("/a2a/app", get(crate::remote::miniapp::serve_index))
         .route("/a2a/app/app.js", get(crate::remote::miniapp::serve_js))
         .route("/a2a/app/style.css", get(crate::remote::miniapp::serve_css))

@@ -40,3 +40,8 @@ pub async fn serve_js() -> Response {
 pub async fn serve_css() -> Response {
     asset(STYLE_CSS, "text/css; charset=utf-8")
 }
+
+/// GET / — the bare domain lands on the app, not a 404.
+pub async fn root_redirect() -> axum::response::Redirect {
+    axum::response::Redirect::temporary("/a2a/app")
+}
