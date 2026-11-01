@@ -1128,6 +1128,10 @@ pub(crate) fn format_help() -> String {
             "Abort current operation (`/stop <id>` targets another session)",
         ),
         (
+            "/approve",
+            "Show/set the tool approval policy (`/approve <approve-only|auto-session|auto-always>`)",
+        ),
+        (
             "/architecture",
             "Directory tree of a path (mechanical, no API cost)",
         ),
@@ -1138,10 +1142,6 @@ pub(crate) fn format_help() -> String {
         (
             "/audit",
             "Audit trail viewer: ACTION + READ + OUTCOME rows (mechanical, no API cost)",
-        ),
-        (
-            "/approve",
-            "Show/set the tool approval policy (`/approve <approve-only|auto-session|auto-always>`)",
         ),
         (
             "/clear",
