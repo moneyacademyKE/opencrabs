@@ -1,8 +1,10 @@
 //! Telegram Mini App `initData` authentication — Phase 3's second door.
 //!
 //! Telegram signs every Mini App launch payload with a key derived from the
-//! bot's own token: `secret = HMAC-SHA256(bot_token, "WebAppData")`, and the
-//! payload's `hash` field is `HMAC-SHA256(secret, data_check_string)` where
+//! bot's own token: `secret = HMAC-SHA256("WebAppData", bot_token)` (the
+//! constant string as HMAC **key**, the bot token as data — per the official
+//! docs' PHP example), and the payload's `hash` field is
+//! `HMAC-SHA256(secret, data_check_string)` where
 //! `data_check_string` is every field (except `hash`/`signature`) sorted by
 //! key and joined with `\n`. We verify that signature, require the launch to
 //! be fresh ([`MAX_AGE_SECS`]), and check the Telegram user id against
@@ -179,7 +181,7 @@ pub fn validate_init_data(
     let data_check_string = check.join("\n");
 
     // 3. HMAC chain: secret from the bot token, expected hash over the check.
-    let secret = hmac_sha256(bot_token.as_bytes(), b"WebAppData");
+    let secret = hmac_sha256(b"WebAppData", bot_token.as_bytes());
     let expected = hex(&hmac_sha256(&secret, data_check_string.as_bytes()));
     ensure!(
         ct_eq(expected.as_bytes(), hash.as_bytes()),

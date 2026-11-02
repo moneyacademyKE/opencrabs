@@ -46,7 +46,8 @@ fn signed_init_data(bot_token: &str, user_id: i64, auth_date: i64) -> String {
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let secret = hmac_sha256(bot_token.as_bytes(), b"WebAppData");
+    // Telegram spec: secret = HMAC-SHA256(key="WebAppData", data=bot_token).
+    let secret = hmac_sha256(b"WebAppData", bot_token.as_bytes());
     let hash = hex(&hmac_sha256(&secret, check.as_bytes()));
     fields.push(("hash".to_string(), hash));
     fields
