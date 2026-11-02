@@ -5,8 +5,9 @@
 //! constant string as HMAC **key**, the bot token as data — per the official
 //! docs' PHP example), and the payload's `hash` field is
 //! `HMAC-SHA256(secret, data_check_string)` where
-//! `data_check_string` is every field (except `hash`/`signature`) sorted by
-//! key and joined with `\n`. We verify that signature, require the launch to
+//! `data_check_string` is every field **except `hash`** — `signature` stays in
+//! it — sorted by key and joined with `\n`. We verify that signature, require
+//! the launch to
 //! be fresh ([`MAX_AGE_SECS`]), and check the Telegram user id against
 //! `[a2a].telegram_users` — an allowlist that **defaults to empty**, i.e. the
 //! door ships CLOSED until the owner lists user ids.
@@ -166,7 +167,11 @@ pub fn validate_init_data(
     }
     ensure!(!fields.is_empty(), "empty init_data");
 
-    // 2. data_check_string: all fields except hash/signature, sorted, k=v\n.
+    // 2. data_check_string: every field EXCEPT `hash` — including `signature`,
+    //    which real launches always carry. Telegram's bot-token path excludes
+    //    only `hash`; the "except hash and signature" rule belongs to the
+    //    third-party Ed25519 path and dropping `signature` here bounced every
+    //    genuine payload (2026-11-02).
     let hash = fields
         .iter()
         .find(|(k, _)| k == "hash")
@@ -174,7 +179,7 @@ pub fn validate_init_data(
         .context("init_data missing hash")?;
     let mut check: Vec<String> = fields
         .iter()
-        .filter(|(k, _)| k != "hash" && k != "signature")
+        .filter(|(k, _)| k != "hash")
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     check.sort();

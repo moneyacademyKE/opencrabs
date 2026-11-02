@@ -35,9 +35,17 @@ fn urlencode(s: &str) -> String {
 fn signed_init_data(bot_token: &str, user_id: i64, auth_date: i64) -> String {
     let user = format!("{{\"id\":{user_id},\"username\":\"moe\"}}");
     // Telegram signs the DECODED key=value list; only the wire form is urlencoded.
+    // Real launches ALWAYS carry `signature` (Telegram's third-party
+    // Ed25519 field), and it is inside the hash's check string — only `hash`
+    // is excluded. Omitting it here is what hid the 2026-11-02 bug: validator
+    // and signer agreed on a payload shape Telegram never sends.
     let mut fields = vec![
         ("auth_date".to_string(), auth_date.to_string()),
         ("query_id".to_string(), "AATe4Y0".to_string()),
+        (
+            "signature".to_string(),
+            "ZmFrZS1lZDI1NTE5LXNpZw".to_string(),
+        ),
         ("user".to_string(), user),
     ];
     fields.sort();
@@ -67,6 +75,24 @@ fn validates_a_wellformed_payload() {
     let user = validate_init_data(&data, "test-bot-token", MAX_AGE_SECS).unwrap();
     assert_eq!(user.id, 42);
     assert_eq!(user.username.as_deref(), Some("moe"));
+}
+
+#[test]
+fn rejects_a_hash_that_ignores_signature() {
+    // Proves `signature` sits INSIDE the check string (only `hash` is
+    // excluded). A hash computed the old, signature-dropping way must bounce —
+    // that convention is exactly what rejected every real launch.
+    let auth_date = now();
+    let user = "{\"id\":42,\"username\":\"moe\"}";
+    let sig = "ZmFrZS1lZDI1NTE5LXNpZw";
+    let check_without_sig = format!("auth_date={auth_date}\nquery_id=AATe4Y0\nuser={user}");
+    let secret = hmac_sha256(b"WebAppData", b"t");
+    let bad_hash = hex(&hmac_sha256(&secret, check_without_sig.as_bytes()));
+    let data = format!(
+        "auth_date={auth_date}&query_id=AATe4Y0&signature={sig}&user={}&hash={bad_hash}",
+        urlencode(user)
+    );
+    assert!(validate_init_data(&data, "t", MAX_AGE_SECS).is_err());
 }
 
 #[test]
