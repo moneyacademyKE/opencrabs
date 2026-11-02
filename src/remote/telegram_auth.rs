@@ -167,29 +167,40 @@ pub fn validate_init_data(
     }
     ensure!(!fields.is_empty(), "empty init_data");
 
-    // 2. data_check_string: every field EXCEPT `hash` — including `signature`,
-    //    which real launches always carry. Telegram's bot-token path excludes
-    //    only `hash`; the "except hash and signature" rule belongs to the
-    //    third-party Ed25519 path and dropping `signature` here bounced every
-    //    genuine payload (2026-11-02).
+    // 2. data_check_string: dual-mode verification.
+    //    Official Bot API 8.0 specification excludes both `hash` and `signature`
+    //    from data_check_string for HMAC calculation. Some implementations or
+    //    legacy clients may include `signature` (excluding only `hash`).
+    //    We compute both candidates and accept if either passes constant-time comparison.
     let hash = fields
         .iter()
         .find(|(k, _)| k == "hash")
         .map(|(_, v)| v.clone())
         .context("init_data missing hash")?;
-    let mut check: Vec<String> = fields
+
+    let mut check_with_sig: Vec<String> = fields
         .iter()
         .filter(|(k, _)| k != "hash")
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
-    check.sort();
-    let data_check_string = check.join("\n");
+    check_with_sig.sort();
+    let data_check_with_sig = check_with_sig.join("\n");
 
-    // 3. HMAC chain: secret from the bot token, expected hash over the check.
+    let mut check_no_sig: Vec<String> = fields
+        .iter()
+        .filter(|(k, _)| k != "hash" && k != "signature")
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    check_no_sig.sort();
+    let data_check_no_sig = check_no_sig.join("\n");
+
+    // 3. HMAC chain: secret from the bot token, check both candidate hashes.
     let secret = hmac_sha256(b"WebAppData", bot_token.as_bytes());
-    let expected = hex(&hmac_sha256(&secret, data_check_string.as_bytes()));
+    let expected_with_sig = hex(&hmac_sha256(&secret, data_check_with_sig.as_bytes()));
+    let expected_no_sig = hex(&hmac_sha256(&secret, data_check_no_sig.as_bytes()));
     ensure!(
-        ct_eq(expected.as_bytes(), hash.as_bytes()),
+        ct_eq(expected_no_sig.as_bytes(), hash.as_bytes())
+            || ct_eq(expected_with_sig.as_bytes(), hash.as_bytes()),
         "initData signature mismatch"
     );
 

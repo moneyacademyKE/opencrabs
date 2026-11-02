@@ -213,21 +213,41 @@ function short(id) {
 // [a2a].telegram_users, hands back a session token — no code typing.
 async function tryInitData() {
   const tg = window.Telegram && window.Telegram.WebApp;
-  if (!tg || !tg.initData) return false;
+  if (!tg) return false;
+  try {
+    if (tg.ready) tg.ready();
+    if (tg.expand) tg.expand();
+  } catch {}
+
+  if (!tg.initData) {
+    say(
+      "login-err",
+      "Telegram session not detected. Please open OpenCrabs via the bot's Menu Button (bottom-left) to auto-login."
+    );
+    return false;
+  }
+
   try {
     const res = await fetch("/a2a/telegram/init-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ init_data: tg.initData, label: "miniapp" }),
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const err = body.error || ("HTTP " + res.status);
+      say("login-err", "Telegram auto-login failed: " + err);
+      return false;
+    }
     const body = await res.json();
     token = body.token;
     scopes = body.scopes || [];
     localStorage.setItem("oc_token", token);
     localStorage.setItem("oc_scopes", JSON.stringify(scopes));
+    say("login-err", "");
     return true;
-  } catch {
+  } catch (e) {
+    say("login-err", "Network error during auto-login: " + e.message);
     return false;
   }
 }
@@ -246,7 +266,11 @@ $("composer").addEventListener("keydown", (e) => {
   }
 });
 (async () => {
-  if (token) enter();
-  else if (await tryInitData()) enter();
-  else show("login");
+  if (await tryInitData()) {
+    enter();
+  } else if (token) {
+    enter();
+  } else {
+    show("login");
+  }
 })();

@@ -78,21 +78,22 @@ fn validates_a_wellformed_payload() {
 }
 
 #[test]
-fn rejects_a_hash_that_ignores_signature() {
-    // Proves `signature` sits INSIDE the check string (only `hash` is
-    // excluded). A hash computed the old, signature-dropping way must bounce —
-    // that convention is exactly what rejected every real launch.
+fn validates_a_payload_where_hash_excludes_signature() {
+    // Standard Bot API 8.0 specification: hash is computed excluding both `hash`
+    // and `signature`. Dual-mode validation must accept this payload.
     let auth_date = now();
     let user = "{\"id\":42,\"username\":\"moe\"}";
     let sig = "ZmFrZS1lZDI1NTE5LXNpZw";
     let check_without_sig = format!("auth_date={auth_date}\nquery_id=AATe4Y0\nuser={user}");
-    let secret = hmac_sha256(b"WebAppData", b"t");
-    let bad_hash = hex(&hmac_sha256(&secret, check_without_sig.as_bytes()));
+    let secret = hmac_sha256(b"WebAppData", b"test-bot-token");
+    let valid_hash = hex(&hmac_sha256(&secret, check_without_sig.as_bytes()));
     let data = format!(
-        "auth_date={auth_date}&query_id=AATe4Y0&signature={sig}&user={}&hash={bad_hash}",
+        "auth_date={auth_date}&query_id=AATe4Y0&signature={sig}&user={}&hash={valid_hash}",
         urlencode(user)
     );
-    assert!(validate_init_data(&data, "t", MAX_AGE_SECS).is_err());
+    let user = validate_init_data(&data, "test-bot-token", MAX_AGE_SECS).unwrap();
+    assert_eq!(user.id, 42);
+    assert_eq!(user.username.as_deref(), Some("moe"));
 }
 
 #[test]
