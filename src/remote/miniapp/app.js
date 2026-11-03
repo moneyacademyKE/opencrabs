@@ -398,6 +398,9 @@ $("panel-back").addEventListener("click", () => show(panelReturn));
 syncSendEnabled();
 (async () => {
   beacon("boot", "token=" + (token ? "yes" : "no"));
+  // Restore the persisted web theme before first paint decisions.
+  const savedTheme = Storage.get("oc_theme");
+  if (savedTheme && typeof applyTheme === "function") applyTheme(savedTheme);
   try {
     if (await tryInitData()) {
       beacon("boot-initdata-ok", "calling enter");

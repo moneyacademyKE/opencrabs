@@ -1,6 +1,6 @@
-// OpenCrabs Mini App — slash commands: palette, dispatch, panels.
-// Loaded after app.js (needs rpc/show/sessionId) and before the boot
-// IIFE runs enter(). Shares the classic-script globals by design.
+// OpenCrabs Mini App — slash commands: palette, dispatch, Phase B
+// panels. Loaded after app.js (needs rpc/show/sessionId) and before the
+// boot IIFE runs enter(). Shares the classic-script globals by design.
 //
 // Dispatch mirrors the TUI's handle_slash_command order:
 // built-in local/panel → user command → skill (prompt) → unknown warning.
@@ -287,6 +287,17 @@ async function maybeCommand(text) {
     case "/usage":
       await openUsagePanel(args || "today");
       return true;
+    case "/skills":
+      await openSkillsPanel(args);
+      return true;
+    case "/profiles":
+      await openProfilesPanel();
+      return true;
+    case "/mission-control":
+      await openMissionPanel();
+      return true;
+    case "/theme":
+      return handleThemeCommand(args);
     case "/clear":
       if (!sessionId) {
         say("app-err", "No conversation to clear yet.");
@@ -361,10 +372,14 @@ async function maybeCommand(text) {
     }
   }
 
-  // Panel commands whose browsers land in Phase C route through here so
-  // the kind table and the dispatcher stay in agreement.
+  // Any remaining panel-kind command without a dedicated case above:
+  // sessions browser (Phase A view) or a future panel. Never dead-end.
   if (cmd && cmd.kind === "panel") {
-    toast(cmd.name + " browser lands with the Phase C dialogs.");
+    if (first === "/sessions" || first === "/new") {
+      await openConversations();
+      return true;
+    }
+    toast(cmd.name + " opens from the chats view.");
     return true;
   }
 

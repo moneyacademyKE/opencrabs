@@ -201,3 +201,4 @@ footer button { width: auto; margin: 0; }
   display: inline-block;
 }
 .model-list { margin-top: 10px; }
+.skill-row, .theme-row { width: auto; margin: 6px 4px 0 0; display: inline-block; }
