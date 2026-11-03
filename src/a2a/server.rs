@@ -178,6 +178,10 @@ pub fn build_router(state: A2aState, allowed_origins: &[String]) -> Router {
             "/a2a/app/conv-ui.js",
             get(crate::remote::miniapp::serve_conv_js),
         )
+        .route(
+            "/a2a/app/tasks-ui.js",
+            get(crate::remote::miniapp::serve_tasks_js),
+        )
         .route("/a2a/app/style.css", get(crate::remote::miniapp::serve_css))
         .route("/a2a/app/beacon", get(crate::remote::miniapp::beacon))
         .merge(protected)

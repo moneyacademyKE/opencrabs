@@ -17,6 +17,7 @@ use std::collections::HashMap;
 const INDEX_HTML: &str = include_str!("miniapp/index.html");
 const APP_JS: &str = include_str!("miniapp/app.js");
 const CONV_JS: &str = include_str!("miniapp/conv-ui.js");
+const TASKS_JS: &str = include_str!("miniapp/tasks-ui.js");
 const STYLE_CSS: &str = include_str!("miniapp/style.css");
 
 /// Serve an embedded asset with a content type and aggressive anti-caching
@@ -45,6 +46,11 @@ pub async fn serve_js() -> Response {
 /// GET /a2a/app/conv-ui.js — conversation rendering + markdown subset.
 pub async fn serve_conv_js() -> Response {
     asset(CONV_JS, "application/javascript; charset=utf-8")
+}
+
+/// GET /a2a/app/tasks-ui.js — streaming send / poll fallback / stop.
+pub async fn serve_tasks_js() -> Response {
+    asset(TASKS_JS, "application/javascript; charset=utf-8")
 }
 
 /// GET /a2a/app/style.css — the look.
