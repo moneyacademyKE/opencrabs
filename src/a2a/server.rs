@@ -183,6 +183,10 @@ pub fn build_router(state: A2aState, allowed_origins: &[String]) -> Router {
             get(crate::remote::miniapp::serve_tasks_js),
         )
         .route(
+            "/a2a/app/cmd-panels.js",
+            get(crate::remote::miniapp::serve_cmd_js),
+        )
+        .route(
             "/a2a/app/cmd-ui.js",
             get(crate::remote::miniapp::serve_cmd_js),
         )

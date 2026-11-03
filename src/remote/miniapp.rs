@@ -55,7 +55,9 @@ pub async fn serve_tasks_js() -> Response {
     asset(TASKS_JS, "application/javascript; charset=utf-8")
 }
 
-/// GET /a2a/app/cmd-ui.js — slash palette, dispatch, Phase B panels.
+/// GET /a2a/app/cmd-panels.js — slash palette, dispatch, Phase B panels.
+/// (Served under the on-disk file name; `/cmd-ui.js` remains as an alias
+/// for the cache-busted filename older shells still reference.)
 pub async fn serve_cmd_js() -> Response {
     asset(CMD_JS, "application/javascript; charset=utf-8")
 }
