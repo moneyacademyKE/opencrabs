@@ -52,11 +52,13 @@ pub struct InitDataRequest {
     pub label: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InitDataResponse {
     pub token: String,
     pub scopes: Vec<String>,
     pub expires_at: u64,
+    pub user_id: i64,
+    pub username: Option<String>,
 }
 
 /// The Telegram user a validated payload identifies.
@@ -289,10 +291,10 @@ pub async fn handle_init_data(
     }
 
     let label = if body.label.trim().is_empty() {
-        format!(
-            "telegram:{}",
-            user.username.unwrap_or_else(|| user.id.to_string())
-        )
+        match &user.username {
+            Some(uname) => format!("telegram:{uname}"),
+            None => format!("telegram:{}", user.id),
+        }
     } else {
         body.label.trim().to_string()
     };
@@ -309,6 +311,8 @@ pub async fn handle_init_data(
                     token,
                     scopes: session.scopes,
                     expires_at: session.expires_at,
+                    user_id: user.id,
+                    username: user.username,
                 }),
             )
                 .into_response()

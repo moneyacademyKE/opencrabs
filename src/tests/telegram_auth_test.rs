@@ -215,6 +215,8 @@ async fn allowlisted_user_gets_a_session_token() {
     assert_eq!(status, StatusCode::OK, "body: {body}");
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     let token = parsed["token"].as_str().unwrap();
+    assert_eq!(parsed["user_id"].as_i64(), Some(42));
+    assert_eq!(parsed["username"].as_str(), Some("moe"));
     let session = state.pairing.verify_token(token).expect("token verifies");
     assert!(session.scopes.contains(&"a2a:send".to_string()));
     assert!(session.scopes.contains(&"a2a:read".to_string()));

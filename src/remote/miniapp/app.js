@@ -6,11 +6,35 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TERMINAL = ["completed", "failed", "canceled", "rejected"];
 
-// localStorage, not sessionStorage: Telegram's webview discards sessionStorage
-// when the app is backgrounded — the session must match the 30-day token TTL,
-// or a spent pairing code looks "expired" on the next visit.
-let token = localStorage.getItem("oc_token");
-let scopes = JSON.parse(localStorage.getItem("oc_scopes") || "[]");
+// Resilient SafeStorage: in sandboxed WebViews (Telegram Desktop, iOS WebKit),
+// raw localStorage can throw SecurityError or QuotaExceededError. We catch
+// exceptions and transparently fall back to an in-memory dictionary.
+const memStorage = {};
+const Storage = {
+  get(key) {
+    try {
+      const val = localStorage.getItem(key);
+      if (val !== null) return val;
+    } catch {}
+    return memStorage[key] || null;
+  },
+  set(key, val) {
+    memStorage[key] = String(val);
+    try {
+      localStorage.setItem(key, val);
+    } catch {}
+  },
+  remove(key) {
+    delete memStorage[key];
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  },
+};
+
+let token = Storage.get("oc_token");
+let scopes = JSON.parse(Storage.get("oc_scopes") || "[]");
+let currentUser = Storage.get("oc_user");
 const tasks = [];
 
 // ── views ──────────────────────────────────────────────────────────────
@@ -34,13 +58,11 @@ async function pair() {
   $("pair-btn").disabled = true;
   say("login-err", "");
   try {
+    const label = $("label").value.trim() || "miniapp";
     const res = await fetch("/a2a/pair", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code,
-        label: $("label").value.trim() || "miniapp",
-      }),
+      body: JSON.stringify({ code, label }),
     });
     if (res.status === 401) throw new Error("Invalid or expired code.");
     if (res.status === 429)
@@ -49,8 +71,10 @@ async function pair() {
     const body = await res.json();
     token = body.token;
     scopes = body.scopes || [];
-    localStorage.setItem("oc_token", token);
-    localStorage.setItem("oc_scopes", JSON.stringify(scopes));
+    currentUser = label;
+    Storage.set("oc_token", token);
+    Storage.set("oc_scopes", JSON.stringify(scopes));
+    Storage.set("oc_user", currentUser);
     enter();
   } catch (e) {
     say("login-err", e.message);
@@ -62,15 +86,21 @@ async function pair() {
 function logout() {
   token = null;
   scopes = [];
-  localStorage.removeItem("oc_token");
-  localStorage.removeItem("oc_scopes");
+  currentUser = null;
+  Storage.remove("oc_token");
+  Storage.remove("oc_scopes");
+  Storage.remove("oc_user");
   tasks.length = 0;
   $("tasks").innerHTML = "";
+  if ($("auth-label")) $("auth-label").textContent = "";
   show("login");
 }
 
 function enter() {
   show("app");
+  if ($("auth-label")) {
+    $("auth-label").textContent = currentUser ? "· " + currentUser : "";
+  }
   render();
   health();
 }
@@ -176,6 +206,17 @@ function replyText(task) {
 // innerHTML only builds structure; all task-controlled text goes in via
 // textContent afterwards — no injection path from task content.
 function render() {
+  if (tasks.length === 0) {
+    $("tasks").innerHTML =
+      '<div class="card empty-welcome">' +
+      '<h2 style="margin:0 0 8px;font-size:18px;">🦀 OpenCrabs Ready</h2>' +
+      '<p class="dim" style="margin:0 0 12px;font-size:13px;">' +
+      (currentUser ? 'Connected as ' + currentUser : 'Connected to host') +
+      '</p>' +
+      '<p class="hint" style="margin:0;font-size:12px;">Type a message below to drive your agent.</p>' +
+      '</div>';
+    return;
+  }
   $("tasks").innerHTML = tasks
     .map((t) => {
       const reply = t.reply ? '<div class="reply"></div>' : "";
@@ -219,7 +260,8 @@ async function tryInitData() {
     if (tg.expand) tg.expand();
   } catch {}
 
-  if (!tg.initData) {
+  const initData = tg.initData;
+  if (!initData) {
     say(
       "login-err",
       "Telegram session not detected. Please open OpenCrabs via the bot's Menu Button (bottom-left) to auto-login."
@@ -231,7 +273,7 @@ async function tryInitData() {
     const res = await fetch("/a2a/telegram/init-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ init_data: tg.initData, label: "miniapp" }),
+      body: JSON.stringify({ init_data: initData, label: "miniapp" }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -242,8 +284,12 @@ async function tryInitData() {
     const body = await res.json();
     token = body.token;
     scopes = body.scopes || [];
-    localStorage.setItem("oc_token", token);
-    localStorage.setItem("oc_scopes", JSON.stringify(scopes));
+    currentUser = body.username
+      ? "@" + body.username
+      : (body.user_id ? "ID " + body.user_id : null);
+    Storage.set("oc_token", token);
+    Storage.set("oc_scopes", JSON.stringify(scopes));
+    if (currentUser) Storage.set("oc_user", currentUser);
     say("login-err", "");
     return true;
   } catch (e) {

@@ -16,13 +16,16 @@ const INDEX_HTML: &str = include_str!("miniapp/index.html");
 const APP_JS: &str = include_str!("miniapp/app.js");
 const STYLE_CSS: &str = include_str!("miniapp/style.css");
 
-/// Serve an embedded asset with a content type and `no-cache` — the binary
-/// is the cache key: assets only change when the daemon does.
+/// Serve an embedded asset with a content type and aggressive anti-caching
+/// so WebViews (Telegram Desktop, iOS WebKit) always fetch the fresh binary payload.
 fn asset(body: &'static str, content_type: &'static str) -> Response {
     let mut resp = Response::new(axum::body::Body::from(body));
     let headers = resp.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, must-revalidate"),
+    );
     resp
 }
 
