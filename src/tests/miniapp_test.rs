@@ -72,6 +72,13 @@ async fn app_assets_serve_with_content_types() {
         body.contains("message/send"),
         "the client speaks the JSON-RPC contract"
     );
+    let (status, body, ct) = get_text(&app, "/a2a/app/conv-ui.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ct.as_deref(), Some("application/javascript; charset=utf-8"));
+    assert!(
+        body.contains("renderMarkdown"),
+        "the conversation UI ships its markdown renderer"
+    );
     let (status, body, ct) = get_text(&app, "/a2a/app/style.css").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ct.as_deref(), Some("text/css; charset=utf-8"));

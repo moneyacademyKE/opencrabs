@@ -36,6 +36,18 @@ let token = Storage.get("oc_token");
 let scopes = JSON.parse(Storage.get("oc_scopes") || "[]");
 let currentUser = Storage.get("oc_user");
 const tasks = [];
+// ── conversations (Phase A parity) ─────────────────────────────────
+// The composer acts on ONE conversation, identified three ways that must
+// agree: sessionId (the conversation row), contextId (the A2A continuity
+// key bound to it), and taskId (the turn currently in flight, for stop).
+// Persisted so a WebView reload resumes where the user left off instead
+// of the old memory-only loss (bk-0026).
+let sessionId = Storage.get("oc_session");
+let contextId = Storage.get("oc_context");
+let convTitle = Storage.get("oc_conv_title");
+let activeTaskId = null;
+let activeAbort = null;
+let convsCache = [];
 
 // ── diagnostic beacon (WebView consoles are invisible) ─────────────
 function beacon(step, detail) {
@@ -60,11 +72,22 @@ beacon("script-loaded", "token=" + (token ? "yes" : "no"));
 function show(view) {
   $("login").hidden = view !== "login";
   $("app").hidden = view !== "app";
+  $("convs").hidden = view !== "convs";
 }
 function say(id, msg) {
   const el = $(id);
   el.textContent = msg || "";
   el.hidden = !msg;
+}
+// Transient confirmation line (post-pair success, saved rename, …).
+// The old app succeeded silently and silence read as failure (bk-0026).
+let toastTimer = null;
+function toast(msg) {
+  const el = $("toast");
+  el.textContent = msg || "";
+  el.hidden = !msg;
+  clearTimeout(toastTimer);
+  if (msg) toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
 }
 
 // ── auth ───────────────────────────────────────────────────────────────
@@ -109,10 +132,22 @@ function logout() {
   Storage.remove("oc_token");
   Storage.remove("oc_scopes");
   Storage.remove("oc_user");
+  setConversation(null, null, null);
   tasks.length = 0;
   $("tasks").innerHTML = "";
   if ($("auth-label")) $("auth-label").textContent = "";
   show("login");
+}
+
+function setConversation(sid, ctx, title) {
+  sessionId = sid;
+  contextId = ctx;
+  convTitle = title;
+  if (sid) Storage.set("oc_session", sid); else Storage.remove("oc_session");
+  if (ctx) Storage.set("oc_context", ctx); else Storage.remove("oc_context");
+  if (title) Storage.set("oc_conv_title", title);
+  else Storage.remove("oc_conv_title");
+  if ($("conv-label")) $("conv-label").textContent = title ? "· " + title : "";
 }
 
 function enter() {
@@ -121,8 +156,12 @@ function enter() {
   if ($("auth-label")) {
     $("auth-label").textContent = currentUser ? "· " + currentUser : "";
   }
+  if ($("conv-label") && convTitle) {
+    $("conv-label").textContent = "· " + convTitle;
+  }
   render();
   health();
+  restoreConversation();
   beacon("enter-done", "app visible=" + !$("app").hidden);
 }
 
@@ -158,56 +197,277 @@ async function health() {
   }
 }
 
-// ── tasks ──────────────────────────────────────────────────────────────
-async function send() {
-  const text = $("composer").value.trim();
-  if (!text || !token) return;
-  $("send").disabled = true;
-  say("app-err", "");
+// ── conversations ─────────────────────────────────────────────────────
+async function loadConversations() {
+  const body = await rpc("sessions/list", { limit: 50 });
+  convsCache = body.sessions || [];
+  renderConvs();
+}
+
+async function openConversations() {
+  show("convs");
+  say("conv-err", "");
   try {
-    const task = await rpc("message/send", {
-      message: { role: "user", parts: [{ text }] },
-    });
-    if (scopes.length && !scopes.includes("a2a:send"))
-      say("app-err", "This session is read-only (no a2a:send scope).");
-    tasks.unshift({
-      id: task.id,
-      state: (task.status && task.status.state) || "working",
-      you: text,
-      reply: replyText(task),
-    });
-    $("composer").value = "";
-    render();
-    poll(task.id);
+    await loadConversations();
   } catch (e) {
-    say("app-err", e.message);
-  } finally {
-    $("send").disabled = false;
+    say("conv-err", e.message);
   }
 }
 
-async function poll(id) {
-  for (;;) {
-    await sleep(1200);
-    let task;
-    try {
-      task = await rpc("tasks/get", { id });
-    } catch (e) {
-      const t = tasks.find((x) => x.id === id);
-      if (t) {
-        t.state = "failed";
-        t.reply = e.message;
-        render();
+async function newConversation() {
+  say("app-err", "");
+  try {
+    const s = await rpc("sessions/create", {});
+    setConversation(s.id, s.contextId, s.title || "New conversation");
+    tasks.length = 0;
+    render();
+    show("app");
+    toast("New conversation — type below to drive your agent.");
+    beacon("conv-new", s.id);
+  } catch (e) {
+    say("app-err", e.message);
+  }
+}
+
+async function openConversation(c) {
+  say("conv-err", "");
+  try {
+    const body = await rpc("sessions/history", { sessionId: c.id, limit: 100 });
+    // Server binds the send-context on create; for a conversation that
+    // didn't come from the gateway we resume under its own id — the
+    // context→session lookup creates the binding on first send (#1159).
+    setConversation(c.id, c.id, c.title || "Conversation");
+    tasks.length = 0;
+    for (const m of body.messages || []) {
+      if (m.role === "user") {
+        tasks.push({ id: m.id, state: "done", you: m.content, reply: "" });
+      } else if (tasks.length && !tasks[tasks.length - 1].reply) {
+        tasks[tasks.length - 1].reply = m.content;
+      } else {
+        tasks.push({ id: m.id, state: "done", you: "", reply: m.content });
       }
-      return;
     }
-    const state = (task.status && task.status.state) || "working";
-    const t = tasks.find((x) => x.id === id);
-    if (t) {
-      t.state = state;
-      t.reply = replyText(task) || t.reply;
+    show("app");
+    render();
+    beacon("conv-open", c.id + " msgs=" + tasks.length);
+  } catch (e) {
+    say("conv-err", e.message);
+  }
+}
+
+async function renameConversation(c) {
+  const title = prompt("Rename conversation", c.title || "");
+  if (title === null) return;
+  try {
+    await rpc("sessions/rename", { sessionId: c.id, title });
+    if (sessionId === c.id) setConversation(c.id, contextId, title || convTitle);
+    await loadConversations();
+    toast("Renamed.");
+  } catch (e) {
+    say("conv-err", e.message);
+  }
+}
+
+async function deleteConversation(c) {
+  if (!confirm("Archive this conversation? (restorable from the host TUI)")) return;
+  try {
+    await rpc("sessions/delete", { sessionId: c.id });
+    if (sessionId === c.id) setConversation(null, null, null);
+    await loadConversations();
+    toast("Archived.");
+  } catch (e) {
+    say("conv-err", e.message);
+  }
+}
+
+// After a reload with a persisted conversation, repaint its history so
+// the screen never opens blank over a live thread.
+async function restoreConversation() {
+  if (!sessionId || tasks.length) return;
+  const mine = sessionId;
+  try {
+    const body = await rpc("sessions/history", { sessionId: mine, limit: 100 });
+    if (sessionId !== mine) return; // user switched meanwhile
+    for (const m of body.messages || []) {
+      if (m.role === "user") {
+        tasks.push({ id: m.id, state: "done", you: m.content, reply: "" });
+      } else if (tasks.length && !tasks[tasks.length - 1].reply) {
+        tasks[tasks.length - 1].reply = m.content;
+      } else {
+        tasks.push({ id: m.id, state: "done", you: "", reply: m.content });
+      }
+    }
+    render();
+    beacon("conv-restored", mine + " msgs=" + tasks.length);
+  } catch (e) {
+    beacon("conv-restore-failed", e.message);
+  }
+}
+
+// ── tasks ──────────────────────────────────────────────────────────────
+// Sending rides `message/stream` (SSE): tokens arrive as events instead
+// of the old 1.2s poll. `message/send` + `tasks/get` polling remains as
+// the fallback for WebViews where streaming fetch misbehaves.
+async function send() {
+  const text = $("composer").value.trim();
+  if (!text) {
+    say("app-err", "Type a message first — the composer is empty.");
+    return;
+  }
+  if (!token) {
+    say("app-err", "Not paired — reopen via the bot's menu button.");
+    return;
+  }
+  $("send").disabled = true;
+  say("app-err", "");
+  const card = { id: null, state: "working", you: text, reply: "" };
+  tasks.push(card);
+  $("composer").value = "";
+  render();
+  try {
+    if (!sessionId) await newConversationSilent();
+    await streamMessage(card, text);
+  } catch (e) {
+    // Streaming failed mid-flight: fall back to send+poll once.
+    try {
+      await pollFallback(card, text);
+    } catch (e2) {
+      card.state = "failed";
+      card.reply = e2.message;
       render();
     }
+  } finally {
+    $("send").disabled = false;
+    activeTaskId = null;
+    setStreaming(false);
+  }
+}
+
+async function newConversationSilent() {
+  const s = await rpc("sessions/create", {});
+  setConversation(s.id, s.contextId, s.title || "");
+}
+
+async function streamMessage(card, text) {
+  const ctrl = new AbortController();
+  activeAbort = ctrl;
+  const res = await fetch("/a2a/v1", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + token,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "message/stream",
+      params: {
+        message: {
+          role: "user",
+          parts: [{ text }],
+          contextId: contextId || undefined,
+        },
+      },
+    }),
+    signal: ctrl.signal,
+  });
+  if (res.status === 401) {
+    logout();
+    throw new Error("Session expired — pair again.");
+  }
+  if (!res.ok || !res.body) throw new Error("Gateway HTTP " + res.status + ".");
+  setStreaming(true);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      const line = frame.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      let ev;
+      try {
+        ev = JSON.parse(line.slice(5).trim());
+      } catch {
+        continue;
+      }
+      applyStreamEvent(card, ev.result || ev);
+    }
+  }
+  if (!TERMINAL.includes((card.state || "").toLowerCase())) {
+    card.state = "completed";
+    render();
+  }
+}
+
+function applyStreamEvent(card, ev) {
+  if (!ev || typeof ev !== "object") return;
+  if (ev.id && !card.id) {
+    card.id = ev.id;
+    activeTaskId = ev.id;
+  }
+  if (ev.contextId && ev.contextId !== contextId) {
+    contextId = ev.contextId;
+    Storage.set("oc_context", contextId);
+  }
+  const kind = ev.kind || "";
+  if (kind === "artifact-update") {
+    const parts = (ev.artifact && ev.artifact.parts) || [];
+    const text = parts.map((p) => p.text || "").join("");
+    card.reply = ev.append ? (card.reply || "") + text : text || card.reply;
+  } else if (kind === "status-update") {
+    const state = ev.status && ev.status.state;
+    if (state) card.state = state.toLowerCase();
+  } else if (ev.status && ev.status.state) {
+    card.state = ev.status.state.toLowerCase();
+    const reply = replyText(ev);
+    if (reply) card.reply = reply;
+  }
+  render();
+}
+
+// Stop button: cancel the in-flight task server-side, then cut the
+// stream. The cancel token kills the agent turn, not just the display.
+async function stopStreaming() {
+  if (activeTaskId) {
+    try {
+      await rpc("tasks/cancel", { id: activeTaskId });
+    } catch {}
+  }
+  if (activeAbort) activeAbort.abort();
+  setStreaming(false);
+}
+
+function setStreaming(on) {
+  $("stop").hidden = !on;
+  $("send").hidden = on;
+}
+
+async function pollFallback(card, text) {
+  const task = await rpc("message/send", {
+    message: { role: "user", parts: [{ text }], contextId: contextId || undefined },
+  });
+  card.id = task.id;
+  activeTaskId = task.id;
+  if (scopes.length && !scopes.includes("a2a:send"))
+    say("app-err", "This session is read-only (no a2a:send scope).");
+  render();
+  await pollInto(card);
+}
+
+async function pollInto(card) {
+  for (;;) {
+    await sleep(1200);
+    const task = await rpc("tasks/get", { id: card.id });
+    const state = ((task.status && task.status.state) || "working").toLowerCase();
+    card.state = state;
+    card.reply = replyText(task) || card.reply;
+    render();
     if (TERMINAL.includes(state)) return;
   }
 }
@@ -221,51 +481,6 @@ function replyText(task) {
   if (out.length === 0 && msg)
     for (const p of msg.parts || []) if (p.text) out.push(p.text);
   return out.join("\n");
-}
-
-// ── render ─────────────────────────────────────────────────────────────
-// innerHTML only builds structure; all task-controlled text goes in via
-// textContent afterwards — no injection path from task content.
-function render() {
-  if (tasks.length === 0) {
-    $("tasks").innerHTML =
-      '<div class="card empty-welcome">' +
-      '<h2 style="margin:0 0 8px;font-size:18px;">🦀 OpenCrabs Ready</h2>' +
-      '<p class="dim" style="margin:0 0 12px;font-size:13px;">' +
-      (currentUser ? 'Connected as ' + currentUser : 'Connected to host') +
-      '</p>' +
-      '<p class="hint" style="margin:0;font-size:12px;">Type a message below to drive your agent.</p>' +
-      '</div>';
-    return;
-  }
-  $("tasks").innerHTML = tasks
-    .map((t) => {
-      const reply = t.reply ? '<div class="reply"></div>' : "";
-      return (
-        '<section class="task">' +
-        '<div class="meta"><span class="state ' +
-        t.state +
-        '">' +
-        t.state +
-        "</span><span>" +
-        short(t.id) +
-        "</span></div>" +
-        '<div class="you"></div>' +
-        reply +
-        "</section>"
-      );
-    })
-    .join("");
-  document.querySelectorAll(".task").forEach((el, i) => {
-    el.querySelector(".you").textContent = tasks[i].you;
-    const r = el.querySelector(".reply");
-    if (r) r.textContent = tasks[i].reply || "";
-  });
-  $("tasks").scrollTop = 0;
-}
-
-function short(id) {
-  return id.length > 10 ? id.slice(0, 10) + "…" : id;
 }
 
 // ── telegram initData auto-login ───────────────────────────────────────
@@ -339,6 +554,10 @@ $("code").addEventListener("keydown", (e) => {
 });
 $("logout").addEventListener("click", logout);
 $("send").addEventListener("click", send);
+$("stop").addEventListener("click", stopStreaming);
+$("convs-btn").addEventListener("click", openConversations);
+$("new-conv").addEventListener("click", newConversation);
+$("back-chat").addEventListener("click", () => show("app"));
 $("composer").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();

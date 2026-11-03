@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OpenCrabs</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="/a2a/app/style.css?v=0.5.14-3">
+<link rel="stylesheet" href="/a2a/app/style.css?v=0.5.14-4">
 </head>
 <body>
 
@@ -30,17 +30,33 @@
     <span class="dot" id="dot"></span>
     <span id="host-label">gateway</span>
     <span id="auth-label" class="dim"></span>
+    <span id="conv-label" class="dim"></span>
     <span class="spacer"></span>
+    <button id="convs-btn" class="ghost">☰ chats</button>
+    <button id="new-conv" class="ghost">＋ new</button>
     <button id="logout" class="ghost">disconnect</button>
   </header>
+  <p id="toast" class="toast" hidden></p>
   <section id="tasks"></section>
   <footer>
     <textarea id="composer" rows="2" placeholder="Send a message…"></textarea>
     <button id="send">Send</button>
+    <button id="stop" class="stop" hidden>Stop</button>
   </footer>
   <p id="app-err" class="err" hidden></p>
 </main>
 
-<script src="/a2a/app/app.js?v=0.5.14-3"></script>
+<main id="convs" class="view" hidden>
+  <header>
+    <button id="back-chat" class="ghost">← back</button>
+    <span>Conversations</span>
+    <span class="spacer"></span>
+  </header>
+  <div id="conv-list"></div>
+  <p id="conv-err" class="err" hidden></p>
+</main>
+
+<script src="/a2a/app/conv-ui.js?v=0.5.14-4"></script>
+<script src="/a2a/app/app.js?v=0.5.14-4"></script>
 </body>
 </html>
