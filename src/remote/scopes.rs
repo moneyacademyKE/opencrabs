@@ -5,8 +5,8 @@
 //!
 //! | Scope      | Grants                                                  |
 //! |------------|---------------------------------------------------------|
-//! | `a2a:read` | `tasks/get`, `session/notify-status`, `sessions/list`, `sessions/history` |
-//! | `a2a:send` | `message/send`, `message/stream`, `tasks/cancel`, `session/notify`, `sessions/create`, `sessions/rename`, `sessions/delete` |
+//! | `a2a:read` | `tasks/get`, `session/notify-status`, `sessions/list`, `sessions/history`, `agent/commands`, `agent/models`, `agent/usage` |
+//! | `a2a:send` | `message/send`, `message/stream`, `tasks/cancel`, `session/notify`, `sessions/create`, `sessions/rename`, `sessions/delete`, `agent/set-model`, `agent/clear-context`, `agent/compact`, `agent/plan*`, `agent/goal-check` |
 //!
 //! Rules (t3code invariants, adapted):
 //! - Scopes only ever narrow: a pairing exchange picks a subset of
@@ -35,11 +35,12 @@ pub const ALL_SCOPES: &[&str] = &[SCOPE_READ, SCOPE_SEND];
 /// is the guard.
 pub fn scope_for_method(method: &str) -> Option<&'static str> {
     match method {
-        "tasks/get" | "session/notify-status" | "sessions/list" | "sessions/history" => {
-            Some(SCOPE_READ)
-        }
+        "tasks/get" | "session/notify-status" | "sessions/list" | "sessions/history"
+        | "agent/commands" | "agent/models" | "agent/usage" => Some(SCOPE_READ),
         "message/send" | "message/stream" | "tasks/cancel" | "session/notify"
-        | "sessions/create" | "sessions/rename" | "sessions/delete" => Some(SCOPE_SEND),
+        | "sessions/create" | "sessions/rename" | "sessions/delete" | "agent/set-model"
+        | "agent/clear-context" | "agent/compact" | "agent/plan" | "agent/plan-show"
+        | "agent/plan-execute" | "agent/plan-discard" | "agent/goal-check" => Some(SCOPE_SEND),
         _ => None,
     }
 }
@@ -75,6 +76,17 @@ mod tests {
         "sessions/history",
         "sessions/rename",
         "sessions/delete",
+        "agent/commands",
+        "agent/models",
+        "agent/set-model",
+        "agent/usage",
+        "agent/clear-context",
+        "agent/compact",
+        "agent/plan",
+        "agent/plan-show",
+        "agent/plan-execute",
+        "agent/plan-discard",
+        "agent/goal-check",
     ];
 
     #[test]
@@ -107,6 +119,17 @@ mod tests {
         assert_eq!(scope_for_method("sessions/create"), Some(SCOPE_SEND));
         assert_eq!(scope_for_method("sessions/rename"), Some(SCOPE_SEND));
         assert_eq!(scope_for_method("sessions/delete"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/commands"), Some(SCOPE_READ));
+        assert_eq!(scope_for_method("agent/models"), Some(SCOPE_READ));
+        assert_eq!(scope_for_method("agent/usage"), Some(SCOPE_READ));
+        assert_eq!(scope_for_method("agent/set-model"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/clear-context"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/compact"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/plan"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/plan-show"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/plan-execute"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/plan-discard"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/goal-check"), Some(SCOPE_SEND));
     }
 
     #[test]

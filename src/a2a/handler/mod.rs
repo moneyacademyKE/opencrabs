@@ -11,6 +11,7 @@
 //! definitions live here (CONTRIBUTING.md).
 
 mod dispatch;
+mod agent_cmds;
 pub(crate) mod notify;
 mod send;
 mod sessions;

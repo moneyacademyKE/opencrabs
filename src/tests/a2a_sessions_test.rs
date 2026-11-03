@@ -8,25 +8,6 @@ use crate::a2a::handler;
 use crate::a2a::types::{JsonRpcRequest, error_codes};
 use crate::services::{MessageService, SessionService};
 
-async fn rpc(method: &str, params: Value) -> crate::a2a::types::JsonRpcResponse {
-    use crate::a2a::test_helpers::helpers;
-    let req = JsonRpcRequest {
-        jsonrpc: "2.0".to_string(),
-        method: method.to_string(),
-        params,
-        id: json!(1),
-    };
-    handler::dispatch(
-        req,
-        handler::new_task_store(),
-        handler::new_cancel_store(),
-        helpers::placeholder_agent_service().await,
-        helpers::placeholder_service_context().await,
-    )
-    .await
-}
-
-/// Dispatch against one shared context so state persists across calls.
 struct Rig {
     ctx: crate::services::ServiceContext,
     agent: std::sync::Arc<crate::brain::agent::service::AgentService>,
@@ -35,10 +16,22 @@ struct Rig {
 impl Rig {
     async fn new() -> Self {
         use crate::a2a::test_helpers::helpers;
-        Self {
-            ctx: helpers::placeholder_service_context().await,
-            agent: helpers::placeholder_agent_service().await,
-        }
+        // The AgentService must be built over the SAME ServiceContext the
+        // rig dispatches with — production shares one context between the
+        // gateway and the agent (start_server / ui.rs). Building the agent
+        // over a second placeholder context points session writes at one
+        // in-memory DB and message writes at another (FK failure).
+        let ctx = helpers::placeholder_service_context().await;
+        let config = crate::config::Config::default();
+        let agent = std::sync::Arc::new(
+            crate::brain::agent::service::AgentService::new(
+                std::sync::Arc::new(crate::brain::provider::PlaceholderProvider),
+                ctx.clone(),
+                &config,
+            )
+            .await,
+        );
+        Self { ctx, agent }
     }
 
     async fn rpc(&self, method: &str, params: Value) -> crate::a2a::types::JsonRpcResponse {
@@ -171,7 +164,10 @@ async fn rename_and_delete_archive_the_conversation() {
 
 #[tokio::test]
 async fn bad_session_id_is_invalid_params() {
-    let resp = rpc("sessions/history", json!({ "sessionId": "not-a-uuid" })).await;
+    let rig = Rig::new().await;
+    let resp = rig
+        .rpc("sessions/history", json!({ "sessionId": "not-a-uuid" }))
+        .await;
     let err = resp.error.expect("error expected");
     assert_eq!(err.code, error_codes::INVALID_PARAMS);
 }
