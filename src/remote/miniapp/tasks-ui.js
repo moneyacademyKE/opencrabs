@@ -7,6 +7,9 @@
 // Sending rides `message/stream` (SSE): tokens arrive as events instead
 // of the old 1.2s poll. `message/send` + `tasks/get` polling remains as
 // the fallback for WebViews where streaming fetch misbehaves.
+//
+// send() routes slash input through the command dispatcher first
+// (cmd-ui.js: maybeCommand), mirroring the TUI's handle_slash_command.
 async function send() {
   const text = $("composer").value.trim();
   if (!text) {
@@ -17,11 +20,22 @@ async function send() {
     say("app-err", "Not paired — reopen via the bot's menu button.");
     return;
   }
+  hidePalette();
+  if (text.startsWith("/") && (await maybeCommand(text))) {
+    $("composer").value = "";
+    syncSendEnabled();
+    return;
+  }
+  await sendText(text);
+}
+
+async function sendText(text, promptText) {
   $("send").disabled = true;
   say("app-err", "");
-  const card = { id: null, state: "working", you: text, reply: "" };
+  const card = { id: null, state: "working", you: promptText || text, reply: "" };
   tasks.push(card);
   $("composer").value = "";
+  syncSendEnabled();
   render();
   try {
     if (!sessionId) await newConversationSilent();

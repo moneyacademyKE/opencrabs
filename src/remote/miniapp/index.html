@@ -38,12 +38,23 @@
   </header>
   <p id="toast" class="toast" hidden></p>
   <section id="tasks"></section>
+  <div id="palette" hidden></div>
   <footer>
-    <textarea id="composer" rows="2" placeholder="Send a message…"></textarea>
+    <textarea id="composer" rows="2" placeholder="Send a message… (/ for commands)"></textarea>
     <button id="send">Send</button>
     <button id="stop" class="stop" hidden>Stop</button>
   </footer>
   <p id="app-err" class="err" hidden></p>
+</main>
+
+<main id="panel" class="view" hidden>
+  <header>
+    <button id="panel-back" class="ghost">← back</button>
+    <span id="panel-title">Panel</span>
+    <span class="spacer"></span>
+  </header>
+  <div id="panel-body"></div>
+  <p id="panel-err" class="err" hidden></p>
 </main>
 
 <main id="convs" class="view" hidden>
@@ -59,5 +70,6 @@
 <script src="/a2a/app/conv-ui.js?v=0.5.14-4"></script>
 <script src="/a2a/app/tasks-ui.js?v=0.5.14-4"></script>
 <script src="/a2a/app/app.js?v=0.5.14-4"></script>
+<script src="/a2a/app/cmd-ui.js?v=0.5.14-4"></script>
 </body>
 </html>

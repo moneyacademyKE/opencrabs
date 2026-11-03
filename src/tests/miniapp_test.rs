@@ -86,6 +86,13 @@ async fn app_assets_serve_with_content_types() {
         body.contains("message/stream"),
         "the turn engine speaks SSE streaming"
     );
+    let (status, body, ct) = get_text(&app, "/a2a/app/cmd-ui.js").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ct.as_deref(), Some("application/javascript; charset=utf-8"));
+    assert!(
+        body.contains("agent/commands"),
+        "the command UI rides the server catalogue"
+    );
     let (status, body, ct) = get_text(&app, "/a2a/app/style.css").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ct.as_deref(), Some("text/css; charset=utf-8"));

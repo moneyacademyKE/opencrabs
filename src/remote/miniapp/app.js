@@ -48,6 +48,8 @@ let convTitle = Storage.get("oc_conv_title");
 let activeTaskId = null;
 let activeAbort = null;
 let convsCache = [];
+let commandsCache = [];
+let panelReturn = "app";
 
 // ── diagnostic beacon (WebView consoles are invisible) ─────────────
 function beacon(step, detail) {
@@ -73,6 +75,7 @@ function show(view) {
   $("login").hidden = view !== "login";
   $("app").hidden = view !== "app";
   $("convs").hidden = view !== "convs";
+  $("panel").hidden = view !== "panel";
 }
 function say(id, msg) {
   const el = $(id);
@@ -162,6 +165,7 @@ function enter() {
   render();
   health();
   restoreConversation();
+  loadCommands();
   beacon("enter-done", "app visible=" + !$("app").hidden);
 }
 
@@ -384,7 +388,14 @@ $("composer").addEventListener("keydown", (e) => {
     e.preventDefault();
     send();
   }
+  if (e.key === "Escape") hidePalette();
 });
+$("composer").addEventListener("input", () => {
+  refreshPalette();
+  syncSendEnabled();
+});
+$("panel-back").addEventListener("click", () => show(panelReturn));
+syncSendEnabled();
 (async () => {
   beacon("boot", "token=" + (token ? "yes" : "no"));
   try {

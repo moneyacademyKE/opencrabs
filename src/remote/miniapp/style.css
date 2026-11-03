@@ -175,3 +175,29 @@ footer button { width: auto; margin: 0; }
 }
 .conv-meta { font-size: 12px; color: var(--dim); }
 .conv-act { flex: none; }
+#palette {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--panel);
+  margin-top: 8px;
+  overflow: hidden;
+}
+.pal-row {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--edge);
+}
+.pal-row:last-child { border-bottom: 0; }
+.pal-name { font-weight: 600; color: var(--accent); }
+.pal-desc { font-size: 12px; }
+.panel-card { margin: 10px 0; max-width: none; }
+.panel-card h3 { margin: 0 0 8px; font-size: 15px; }
+.panel-line { margin: 4px 0; font-size: 13px; word-break: break-word; }
+.model-provider, .model-choice, .period-btn {
+  width: auto;
+  margin: 4px 4px 0 0;
+  display: inline-block;
+}
+.model-list { margin-top: 10px; }
