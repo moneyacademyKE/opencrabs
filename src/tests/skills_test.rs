@@ -88,13 +88,20 @@ fn body_preserves_internal_blank_lines_and_markdown() {
 #[test]
 fn builtin_security_audit_loads_via_resolver() {
     // The compile-time embedded security-audit skill must always resolve.
-    let skill = resolve_skill("security-audit").expect("built-in 'security-audit' must exist");
-    assert_eq!(skill.source, SkillSource::Builtin);
-    assert!(
-        skill.description.to_lowercase().contains("security"),
-        "description should mention security"
-    );
-    assert!(!skill.body.is_empty());
+    // Hermetic: a same-named user skill (e.g. installed via `crab install`)
+    // would shadow the builtin in a non-overridden home.
+    crate::config::profile::with_home_override(std::env::temp_dir().join(format!(
+        "oc-builtin-audit-{}",
+        std::process::id()
+    )), || {
+        let skill = resolve_skill("security-audit").expect("built-in 'security-audit' must exist");
+        assert_eq!(skill.source, SkillSource::Builtin);
+        assert!(
+            skill.description.to_lowercase().contains("security"),
+            "description should mention security"
+        );
+        assert!(!skill.body.is_empty());
+    });
 }
 
 #[test]
