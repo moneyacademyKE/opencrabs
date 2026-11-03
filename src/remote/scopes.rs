@@ -5,7 +5,7 @@
 //!
 //! | Scope      | Grants                                                  |
 //! |------------|---------------------------------------------------------|
-//! | `a2a:read` | `tasks/get`, `session/notify-status`, `sessions/list`, `sessions/history`, `agent/commands`, `agent/models`, `agent/usage` |
+//! | `a2a:read` | `tasks/get`, `session/notify-status`, `sessions/list`, `sessions/history`, `agent/commands`, `agent/models`, `agent/usage`, `agent/skills`, `agent/profiles`, `agent/mission-control` |
 //! | `a2a:send` | `message/send`, `message/stream`, `tasks/cancel`, `session/notify`, `sessions/create`, `sessions/rename`, `sessions/delete`, `agent/set-model`, `agent/clear-context`, `agent/compact`, `agent/plan*`, `agent/goal-check` |
 //!
 //! Rules (t3code invariants, adapted):
@@ -36,7 +36,8 @@ pub const ALL_SCOPES: &[&str] = &[SCOPE_READ, SCOPE_SEND];
 pub fn scope_for_method(method: &str) -> Option<&'static str> {
     match method {
         "tasks/get" | "session/notify-status" | "sessions/list" | "sessions/history"
-        | "agent/commands" | "agent/models" | "agent/usage" => Some(SCOPE_READ),
+        | "agent/commands" | "agent/models" | "agent/usage" | "agent/skills"
+        | "agent/profiles" | "agent/mission-control" => Some(SCOPE_READ),
         "message/send" | "message/stream" | "tasks/cancel" | "session/notify"
         | "sessions/create" | "sessions/rename" | "sessions/delete" | "agent/set-model"
         | "agent/clear-context" | "agent/compact" | "agent/plan" | "agent/plan-show"
@@ -87,6 +88,9 @@ mod tests {
         "agent/plan-execute",
         "agent/plan-discard",
         "agent/goal-check",
+        "agent/skills",
+        "agent/profiles",
+        "agent/mission-control",
     ];
 
     #[test]
@@ -130,6 +134,9 @@ mod tests {
         assert_eq!(scope_for_method("agent/plan-execute"), Some(SCOPE_SEND));
         assert_eq!(scope_for_method("agent/plan-discard"), Some(SCOPE_SEND));
         assert_eq!(scope_for_method("agent/goal-check"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("agent/skills"), Some(SCOPE_READ));
+        assert_eq!(scope_for_method("agent/profiles"), Some(SCOPE_READ));
+        assert_eq!(scope_for_method("agent/mission-control"), Some(SCOPE_READ));
     }
 
     #[test]

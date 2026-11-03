@@ -65,6 +65,7 @@ pub async fn handle_commands(id: Value, _params: Value) -> JsonRpcResponse {
         ("/discard", "local"),   // agent/plan-discard
         ("/stop", "local"),      // tasks/cancel (client-side)
         ("/rename", "local"),    // sessions/rename
+        ("/theme", "local"),     // client-side CSS themes (Phase C)
     ];
     let is_local = |name: &str| LOCAL.iter().find(|(n, _)| *n == name);
 

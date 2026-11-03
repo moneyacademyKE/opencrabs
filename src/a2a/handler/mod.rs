@@ -12,6 +12,7 @@
 
 mod dispatch;
 mod agent_cmds;
+mod dialogs;
 pub(crate) mod notify;
 mod send;
 mod sessions;

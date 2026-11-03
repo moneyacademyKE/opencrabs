@@ -2,7 +2,7 @@
 //! `METHOD_NOT_FOUND`.
 
 use super::stores::{CancelStore, TaskStore};
-use super::{agent_cmds, notify, send, sessions, tasks};
+use super::{agent_cmds, dialogs, notify, send, sessions, tasks};
 use crate::a2a::types::*;
 use crate::brain::agent::service::AgentService;
 use crate::services::ServiceContext;
@@ -92,6 +92,11 @@ pub async fn dispatch(
             agent_cmds::handle_plan_discard(req.id, req.params, service_context.clone()).await
         }
         "agent/goal-check" => agent_cmds::handle_goal_check(req.id, req.params).await,
+        "agent/skills" => dialogs::handle_skills(req.id, req.params).await,
+        "agent/profiles" => dialogs::handle_profiles(req.id, req.params).await,
+        "agent/mission-control" => {
+            dialogs::handle_mission_control(req.id, req.params, service_context.clone()).await
+        }
         _ => JsonRpcResponse::error(
             req.id,
             error_codes::METHOD_NOT_FOUND,
