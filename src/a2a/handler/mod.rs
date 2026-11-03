@@ -13,6 +13,7 @@
 mod dispatch;
 pub(crate) mod notify;
 mod send;
+mod sessions;
 mod stores;
 pub mod stream;
 pub(crate) mod tasks;

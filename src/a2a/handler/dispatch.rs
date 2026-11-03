@@ -2,7 +2,7 @@
 //! `METHOD_NOT_FOUND`.
 
 use super::stores::{CancelStore, TaskStore};
-use super::{notify, send, tasks};
+use super::{notify, send, sessions, tasks};
 use crate::a2a::types::*;
 use crate::brain::agent::service::AgentService;
 use crate::services::ServiceContext;
@@ -47,6 +47,21 @@ pub async fn dispatch(
                 &service_context.pool(),
             )
             .await
+        }
+        "sessions/list" => {
+            sessions::handle_list(req.id, req.params, service_context.clone()).await
+        }
+        "sessions/create" => {
+            sessions::handle_create(req.id, req.params, service_context.clone()).await
+        }
+        "sessions/history" => {
+            sessions::handle_history(req.id, req.params, service_context.clone()).await
+        }
+        "sessions/rename" => {
+            sessions::handle_rename(req.id, req.params, service_context.clone()).await
+        }
+        "sessions/delete" => {
+            sessions::handle_delete(req.id, req.params, service_context.clone()).await
         }
         _ => JsonRpcResponse::error(
             req.id,

@@ -5,8 +5,8 @@
 //!
 //! | Scope      | Grants                                                  |
 //! |------------|---------------------------------------------------------|
-//! | `a2a:read` | `tasks/get`, `session/notify-status`                     |
-//! | `a2a:send` | `message/send`, `message/stream`, `tasks/cancel`, `session/notify` |
+//! | `a2a:read` | `tasks/get`, `session/notify-status`, `sessions/list`, `sessions/history` |
+//! | `a2a:send` | `message/send`, `message/stream`, `tasks/cancel`, `session/notify`, `sessions/create`, `sessions/rename`, `sessions/delete` |
 //!
 //! Rules (t3code invariants, adapted):
 //! - Scopes only ever narrow: a pairing exchange picks a subset of
@@ -35,8 +35,11 @@ pub const ALL_SCOPES: &[&str] = &[SCOPE_READ, SCOPE_SEND];
 /// is the guard.
 pub fn scope_for_method(method: &str) -> Option<&'static str> {
     match method {
-        "tasks/get" | "session/notify-status" => Some(SCOPE_READ),
-        "message/send" | "message/stream" | "tasks/cancel" | "session/notify" => Some(SCOPE_SEND),
+        "tasks/get" | "session/notify-status" | "sessions/list" | "sessions/history" => {
+            Some(SCOPE_READ)
+        }
+        "message/send" | "message/stream" | "tasks/cancel" | "session/notify"
+        | "sessions/create" | "sessions/rename" | "sessions/delete" => Some(SCOPE_SEND),
         _ => None,
     }
 }
@@ -57,7 +60,9 @@ mod tests {
 
     /// The complete dispatched method surface at time of writing:
     /// dispatch.rs (message/send, tasks/get, tasks/cancel, session/notify,
-    /// session/notify-status) + server.rs SSE (message/stream).
+    /// session/notify-status, sessions/list, sessions/create,
+    /// sessions/history, sessions/rename, sessions/delete) + server.rs SSE
+    /// (message/stream).
     const KNOWN_METHODS: &[&str] = &[
         "message/send",
         "message/stream",
@@ -65,6 +70,11 @@ mod tests {
         "tasks/cancel",
         "session/notify",
         "session/notify-status",
+        "sessions/list",
+        "sessions/create",
+        "sessions/history",
+        "sessions/rename",
+        "sessions/delete",
     ];
 
     #[test]
@@ -88,10 +98,15 @@ mod tests {
     fn scope_assignment_matrix() {
         assert_eq!(scope_for_method("tasks/get"), Some(SCOPE_READ));
         assert_eq!(scope_for_method("session/notify-status"), Some(SCOPE_READ));
+        assert_eq!(scope_for_method("sessions/list"), Some(SCOPE_READ));
+        assert_eq!(scope_for_method("sessions/history"), Some(SCOPE_READ));
         assert_eq!(scope_for_method("message/send"), Some(SCOPE_SEND));
         assert_eq!(scope_for_method("message/stream"), Some(SCOPE_SEND));
         assert_eq!(scope_for_method("tasks/cancel"), Some(SCOPE_SEND));
         assert_eq!(scope_for_method("session/notify"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("sessions/create"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("sessions/rename"), Some(SCOPE_SEND));
+        assert_eq!(scope_for_method("sessions/delete"), Some(SCOPE_SEND));
     }
 
     #[test]
