@@ -175,6 +175,7 @@ pub fn build_router(state: A2aState, allowed_origins: &[String]) -> Router {
         .route("/a2a/app", get(crate::remote::miniapp::serve_index))
         .route("/a2a/app/app.js", get(crate::remote::miniapp::serve_js))
         .route("/a2a/app/style.css", get(crate::remote::miniapp::serve_css))
+        .route("/a2a/app/beacon", get(crate::remote::miniapp::beacon))
         .merge(protected)
         .layer(cors)
         .with_state(state)

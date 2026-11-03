@@ -9,8 +9,10 @@
 //! — it embeds no secrets; the pair rate limiter and the JSON-RPC Bearer
 //! gate are the boundary.
 
+use axum::extract::Query;
 use axum::http::{HeaderValue, header};
 use axum::response::Response;
+use std::collections::HashMap;
 
 const INDEX_HTML: &str = include_str!("miniapp/index.html");
 const APP_JS: &str = include_str!("miniapp/app.js");
@@ -47,4 +49,14 @@ pub async fn serve_css() -> Response {
 /// GET / — the bare domain lands on the app, not a 404.
 pub async fn root_redirect() -> axum::response::Redirect {
     axum::response::Redirect::temporary("/a2a/app")
+}
+
+/// GET /a2a/app/beacon — client-side diagnostic log endpoint.
+/// The MiniApp JS fires this at every decision point so we can trace
+/// the boot flow from server logs (WebView consoles are invisible).
+pub async fn beacon(Query(params): Query<HashMap<String, String>>) -> &'static str {
+    let step = params.get("s").map(|s| s.as_str()).unwrap_or("?");
+    let detail = params.get("d").map(|s| s.as_str()).unwrap_or("");
+    tracing::info!(step = step, detail = detail, "miniapp beacon");
+    "ok"
 }

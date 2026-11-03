@@ -37,6 +37,25 @@ let scopes = JSON.parse(Storage.get("oc_scopes") || "[]");
 let currentUser = Storage.get("oc_user");
 const tasks = [];
 
+// ── diagnostic beacon (WebView consoles are invisible) ─────────────
+function beacon(step, detail) {
+  try {
+    const q = "s=" + encodeURIComponent(step) +
+              "&d=" + encodeURIComponent(detail || "");
+    fetch("/a2a/app/beacon?" + q).catch(() => {});
+  } catch {}
+}
+
+// Global error trap: any unhandled exception becomes a beacon.
+window.onerror = function(msg, src, line, col) {
+  beacon("js-error", msg + " at " + (src||"?") + ":" + line + ":" + col);
+};
+window.addEventListener("unhandledrejection", function(ev) {
+  beacon("promise-error", String(ev.reason));
+});
+
+beacon("script-loaded", "token=" + (token ? "yes" : "no"));
+
 // ── views ──────────────────────────────────────────────────────────────
 function show(view) {
   $("login").hidden = view !== "login";
@@ -97,12 +116,14 @@ function logout() {
 }
 
 function enter() {
+  beacon("enter", "calling show(app)");
   show("app");
   if ($("auth-label")) {
     $("auth-label").textContent = currentUser ? "· " + currentUser : "";
   }
   render();
   health();
+  beacon("enter-done", "app visible=" + !$("app").hidden);
 }
 
 // ── gateway calls ──────────────────────────────────────────────────────
@@ -253,35 +274,46 @@ function short(id) {
 // that signature (POST /a2a/telegram/init-data) and, if the user is on
 // [a2a].telegram_users, hands back a session token — no code typing.
 async function tryInitData() {
+  beacon("initdata-start", "checking window.Telegram");
   const tg = window.Telegram && window.Telegram.WebApp;
-  if (!tg) return false;
+  if (!tg) {
+    beacon("initdata-no-sdk", "window.Telegram=" + typeof window.Telegram);
+    return false;
+  }
   try {
     if (tg.ready) tg.ready();
     if (tg.expand) tg.expand();
   } catch {}
 
   const initData = tg.initData;
+  beacon("initdata-check", "len=" + (initData ? initData.length : 0));
   if (!initData) {
     say(
       "login-err",
       "Telegram session not detected. Please open OpenCrabs via the bot's Menu Button (bottom-left) to auto-login."
     );
+    beacon("initdata-empty", "no initData");
     return false;
   }
 
   try {
+    beacon("initdata-fetch", "posting to /a2a/telegram/init-data");
     const res = await fetch("/a2a/telegram/init-data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ init_data: initData, label: "miniapp" }),
     });
+    beacon("initdata-response", "status=" + res.status);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       const err = body.error || ("HTTP " + res.status);
       say("login-err", "Telegram auto-login failed: " + err);
+      beacon("initdata-rejected", err);
       return false;
     }
     const body = await res.json();
+    beacon("initdata-body", "token=" + (body.token ? "yes" : "no") +
+           " user=" + (body.username || body.user_id || "?"));
     token = body.token;
     scopes = body.scopes || [];
     currentUser = body.username
@@ -291,9 +323,11 @@ async function tryInitData() {
     Storage.set("oc_scopes", JSON.stringify(scopes));
     if (currentUser) Storage.set("oc_user", currentUser);
     say("login-err", "");
+    beacon("initdata-ok", "returning true");
     return true;
   } catch (e) {
     say("login-err", "Network error during auto-login: " + e.message);
+    beacon("initdata-error", e.message);
     return false;
   }
 }
@@ -312,11 +346,21 @@ $("composer").addEventListener("keydown", (e) => {
   }
 });
 (async () => {
-  if (await tryInitData()) {
-    enter();
-  } else if (token) {
-    enter();
-  } else {
+  beacon("boot", "token=" + (token ? "yes" : "no"));
+  try {
+    if (await tryInitData()) {
+      beacon("boot-initdata-ok", "calling enter");
+      enter();
+    } else if (token) {
+      beacon("boot-stale-token", "calling enter");
+      enter();
+    } else {
+      beacon("boot-no-auth", "showing login");
+      show("login");
+    }
+    beacon("boot-done", "login.hidden=" + $("login").hidden + " app.hidden=" + $("app").hidden);
+  } catch (e) {
+    beacon("boot-crash", e.message + " | " + e.stack);
     show("login");
   }
 })();

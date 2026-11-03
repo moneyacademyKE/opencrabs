@@ -10,6 +10,7 @@
   --bad: #f85149;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
